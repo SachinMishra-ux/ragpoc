@@ -1,0 +1,10 @@
+langchain
+langchain-google-genai
+langchain-groq
+boto3>=1.35.0
+pypdf
+python-dotenv
+pdf2image
+pillow
+fastapi
+uvicorn

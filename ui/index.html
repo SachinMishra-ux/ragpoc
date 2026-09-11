@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Financial RAG Agent • Amazon S3 Vectors</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Highlight.js for Code Syntax Highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <!-- Marked for Markdown & Table Parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a10 10 0 1 0 10 10H12V2z"></path>
+            <path d="M12 12 2.1 10.4a10 10 0 0 1 9.9-8.4z"></path>
+          </svg>
+        </div>
+        <div>
+          <h1>Financial RAG Agent</h1>
+          <p class="subtitle">Autonomous LangGraph Agent with Amazon S3 Vectors & SQLite Memory</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <div id="statusBadge" class="badge badge-warning">
+          <span class="status-dot"></span>
+          <span id="statusText">Connecting...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Tab Navigation -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-tab="chat-tab" id="tabChatBtn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        Autonomous Agent Chat
+      </button>
+      <button class="tab-btn" data-tab="upload-tab" id="tabUploadBtn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        Upload Documents to S3
+      </button>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="content-area">
+
+      <!-- TAB 1: AUTONOMOUS AGENT CHAT -->
+      <section id="chat-tab" class="tab-pane active">
+        <!-- Thread Controls Header -->
+        <div class="thread-toolbar">
+          <div class="thread-meta">
+            <span class="thread-label">Thread ID:</span>
+            <code id="currentThreadDisplay" class="thread-id-pill">generating...</code>
+            <button id="copyThreadBtn" class="btn-icon" title="Copy Thread ID">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+          <div class="thread-actions">
+            <select id="threadSelect" class="select-sm" title="Switch Conversation">
+              <option value="">Switch Saved Conversation...</option>
+            </select>
+            <button id="newChatBtn" class="btn btn-secondary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              New Conversation
+            </button>
+          </div>
+        </div>
+
+        <!-- Chat Conversation Feed -->
+        <div id="chatFeed" class="chat-feed">
+          <div class="welcome-card card">
+            <h3>👋 Welcome to Financial RAG Agent</h3>
+            <p>I am an autonomous agent equipped with <strong>Amazon S3 Vectors</strong> retrieval and <strong>SQLite Conversation Memory</strong>.</p>
+            <div class="capabilities-grid">
+              <div class="capability-item">
+                <span class="cap-badge cap-direct">⚡ Direct Answer</span>
+                <p>Ask greetings, accounting definitions, or code without wasting vector searches.</p>
+                <div class="prompt-chip" onclick="fillPrompt('Explain the difference between operating margin and net profit margin.')">
+                  "Explain operating vs net margin"
+                </div>
+              </div>
+              <div class="capability-item">
+                <span class="cap-badge cap-tool">🔍 S3 Vectors Search</span>
+                <p>Ask about specific reports (EY, JPMorgan, annual reports, balance sheets).</p>
+                <div class="prompt-chip" onclick="fillPrompt('What are the key financial highlights and revenue figures in EY Financial Report 2025? Display in a table.')">
+                  "EY 2025 revenue table"
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sticky Query Input Card -->
+        <div class="card query-card">
+          <form id="queryForm">
+            <!-- Attached Screenshot / Image Preview Container -->
+            <div id="attachedImageContainer" class="attached-image-container hidden">
+              <div class="attached-image-thumb-wrap">
+                <img id="attachedImagePreview" src="" alt="Screenshot attachment">
+              </div>
+              <div class="attached-image-info">
+                <span id="attachedImageName" class="attached-image-name">Screenshot</span>
+                <span id="attachedImageSize" class="attached-image-size">0 KB</span>
+              </div>
+              <button type="button" id="removeAttachedImageBtn" class="btn-icon remove-attach-btn" title="Remove attached image">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="18" x2="18" y2="6"></line>
+                </svg>
+              </button>
+            </div>
+
+            <div class="query-input-wrap" id="queryInputWrap">
+              <textarea 
+                id="questionInput" 
+                rows="2" 
+                placeholder="Ask about financial reports or paste a screenshot (Ctrl+V / Cmd+V)..." 
+                required></textarea>
+              <div class="input-actions">
+                <div class="input-left-tools">
+                  <button type="button" id="attachImageBtn" class="btn btn-secondary btn-sm btn-attach" title="Attach screenshot or image (or paste directly via Ctrl+V / Cmd+V)">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                      <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                      <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    <span>Attach Screenshot</span>
+                  </button>
+                  <input type="file" id="screenshotFileInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
+                  <span class="paste-hint">Tip: Paste screenshot with <code>Ctrl+V</code></span>
+                </div>
+                <button type="submit" id="submitBtn" class="btn btn-primary">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                  <span>Send</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Agent Filter Settings -->
+            <div class="filter-bar">
+              <div class="filter-item">
+                <label for="docFilterSelect">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                  </svg>
+                  Document Focus (Optional)
+                </label>
+                <select id="docFilterSelect">
+                  <option value="">Agent Auto-Selects Document</option>
+                </select>
+              </div>
+
+              <div class="filter-item filter-small">
+                <label for="limitSelect">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                  </svg>
+                  Top-K Vector Context
+                </label>
+                <select id="limitSelect">
+                  <option value="1">1 page</option>
+                  <option value="2">2 pages</option>
+                  <option value="3" selected>3 pages</option>
+                  <option value="5">5 pages</option>
+                </select>
+              </div>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- TAB 2: UPLOAD TO S3 -->
+      <section id="upload-tab" class="tab-pane">
+        <div class="card upload-card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242M12 12v9m-4-4 4 4 4-4"/>
+              </svg>
+              <span>Upload PDF Document to Amazon S3</span>
+            </div>
+            <span class="badge badge-neutral" id="targetBucketBadge">Target: S3 Bucket</span>
+          </div>
+
+          <p class="section-desc">
+            Upload financial statements or annual reports directly into your S3 bucket.
+            The automated worker daemon ingests document embeddings and rich filterable metadata into Amazon S3 Vectors.
+          </p>
+
+          <div id="dropZone" class="drop-zone">
+            <input type="file" id="fileInput" accept=".pdf" class="file-input">
+            <div class="drop-zone-content">
+              <div class="upload-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="12" y1="18" x2="12" y2="12"></line>
+                  <line x1="9" y1="15" x2="12" y2="12"></line>
+                  <line x1="15" y1="15" x2="12" y2="12"></line>
+                </svg>
+              </div>
+              <h3>Drag & drop your financial PDF here</h3>
+              <p>or <span class="browse-link">browse files</span> from your computer</p>
+              <span class="file-format-hint">Only .pdf documents are supported</span>
+            </div>
+          </div>
+
+          <div id="fileDetails" class="file-details hidden">
+            <div class="file-info-row">
+              <div class="file-icon-box">PDF</div>
+              <div class="file-meta">
+                <div id="selectedFileName" class="file-name">filename.pdf</div>
+                <div id="selectedFileSize" class="file-size">0 KB</div>
+              </div>
+              <button type="button" id="removeFileBtn" class="btn-icon" title="Remove file">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+            <button id="uploadSubmitBtn" class="btn btn-primary btn-block">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              <span>Upload to S3 & Trigger Ingestion</span>
+            </button>
+          </div>
+
+          <div id="uploadStatusBox" class="alert-box hidden"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Lightbox Modal for PDF Page Views -->
+    <div id="imageModal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h4 id="modalImageTitle">Document Page View</h4>
+          <button id="modalCloseBtn" class="btn-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <img id="modalImageSrc" src="" alt="Enlarged context page view">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+[project]
+name = "ragpoc"
+version = "0.1.0"
+description = "Financial Multimodal RAG with Amazon S3 Vectors and Gemini"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=0.2.5",
+    "boto3>=1.35.0",
+    "langchain-google-genai",
+    "pypdf",
+    "pillow",
+    "pdf2image",
+    "fastapi",
+    "uvicorn",
+    "python-dotenv",
+]
