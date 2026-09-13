@@ -10,10 +10,10 @@ class GeminiRAG:
         """
         self.llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
         self.system_prompt = (
-            "You are an assistant for question-answering tasks. "
-            "Use the provided image context to answer the question. "
+            "You are an expert academic and engineering tutor. "
+            "Use the provided image context (representing pages of textbooks, circuit diagrams, and technical notes) to answer the question. "
             "If you don't know the answer, say that you don't know. "
-            "Use three sentences maximum and keep the answer concise."
+            "Provide an accurate, detailed explanation with formulas and code where appropriate."
         )
 
     def answer_question(self, question: str, base64_images: list[str]) -> str:

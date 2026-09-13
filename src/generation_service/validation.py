@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class QueryRequest(BaseModel):
-    question: str = Field(..., description="The query question for the financial documents.")
+    question: str = Field(..., description="The query question for the academic and engineering documents.")
     thread_id: str | None = Field(
         default=None,
         description="Conversation thread identifier for multi-turn conversation persistence via SQLite checkpointer."
@@ -10,7 +10,7 @@ class QueryRequest(BaseModel):
     limit: int = Field(default=3, ge=1, le=10, description="The maximum number of matching pages to retrieve.")
     filter: dict | None = Field(
         default=None,
-        description="Optional metadata filter dictionary for Amazon S3 Vectors (e.g., {'document_name': 'EY_Financial_report_2025.pdf'})."
+        description="Optional metadata filter dictionary for Amazon S3 Vectors (e.g., {'document_name': 'ELECTRONIC DEVICES AND CIRCUITS.pdf'})."
     )
     document_name: str | None = Field(
         default=None,
@@ -52,3 +52,29 @@ class UploadResponse(BaseModel):
     bucket: str = Field(..., description="Target S3 bucket name")
     s3_key: str = Field(..., description="S3 object key")
     message: str = Field(..., description="Descriptive status message")
+
+
+class DeleteDocumentResponse(BaseModel):
+    status: str = Field(..., description="Status of deletion, e.g., 'success'")
+    document_name: str = Field(..., description="Name of the document deleted")
+    vectors_deleted: int = Field(..., description="Number of vector chunks deleted from S3 Vectors")
+    s3_object_deleted: bool = Field(..., description="Whether the raw PDF was deleted from S3 document storage")
+    message: str = Field(..., description="Descriptive status message")
+
+
+class DeleteVectorsRequest(BaseModel):
+    keys: list[str] = Field(..., description="List of unique vector keys to delete from S3 Vectors")
+
+
+class DeleteVectorsResponse(BaseModel):
+    status: str = Field(..., description="Status of deletion")
+    keys_deleted: int = Field(..., description="Number of vector keys deleted")
+    message: str = Field(..., description="Descriptive status message")
+
+
+class PurgeIndexResponse(BaseModel):
+    status: str = Field(..., description="Status of the purge/reset operation")
+    index_name: str = Field(..., description="Vector index name")
+    recreated: bool = Field(..., description="Whether a fresh index was recreated")
+    message: str = Field(..., description="Descriptive status message")
+

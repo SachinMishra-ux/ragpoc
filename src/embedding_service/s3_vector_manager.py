@@ -280,8 +280,62 @@ class S3VectorManager:
         """Deletes vectors by key from the index."""
         if not keys:
             return
-        self.client.delete_vectors(
+        # Delete in batches of up to 500 keys
+        for i in range(0, len(keys), 500):
+            batch = keys[i : i + 500]
+            self.client.delete_vectors(
+                vectorBucketName=self.vector_bucket_name,
+                indexName=self.index_name,
+                keys=batch,
+            )
+
+    def delete_document_vectors(self, document_name: str) -> int:
+        """
+        Finds and deletes all vectors belonging to a specific document name.
+        Paginates through index vectors, matches by metadata or key prefix, and deletes them.
+        Returns the number of deleted vectors.
+        """
+        clean_doc = document_name.replace(" ", "_").replace("/", "_")
+        keys_to_delete = []
+        next_token = None
+
+        while True:
+            kwargs = {
+                "vectorBucketName": self.vector_bucket_name,
+                "indexName": self.index_name,
+                "maxResults": 500,
+                "returnMetadata": True,
+            }
+            if next_token:
+                kwargs["nextToken"] = next_token
+
+            resp = self.client.list_vectors(**kwargs)
+            for vec in resp.get("vectors", []):
+                meta = vec.get("metadata", {})
+                doc = meta.get("document_name") if isinstance(meta, dict) else None
+                key = vec.get("key", "")
+                if doc == document_name or key.startswith(f"{clean_doc}#") or key.startswith(f"{document_name}#"):
+                    keys_to_delete.append(key)
+
+            next_token = resp.get("nextToken")
+            if not next_token:
+                break
+
+        if keys_to_delete:
+            print(f"Deleting {len(keys_to_delete)} vector(s) for document '{document_name}'...")
+            self.delete_vectors(keys_to_delete)
+            print(f"✅ Deleted {len(keys_to_delete)} vector(s) for '{document_name}'.")
+        else:
+            print(f"ℹ️ No vectors found for document '{document_name}'.")
+
+        return len(keys_to_delete)
+
+    def delete_index(self):
+        """Deletes the entire vector index from the vector bucket."""
+        print(f"Deleting S3 Vector Index '{self.index_name}'...")
+        self.client.delete_index(
             vectorBucketName=self.vector_bucket_name,
             indexName=self.index_name,
-            keys=keys,
         )
+        print(f"✅ Deleted S3 Vector Index '{self.index_name}'.")
+

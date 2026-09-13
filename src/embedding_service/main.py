@@ -1,7 +1,9 @@
 import os
 import sys
 import glob
+import json
 import base64
+import argparse
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
@@ -24,23 +26,63 @@ from src.embedding_service.s3_vector_manager import S3VectorManager
 from src.generation_service.gemini_rag_llm import GeminiRAG
 
 
-def ingest_local_documents(data_dir: str, vector_manager: S3VectorManager, embedder: GeminiEmbedder, batch_size: int = 5):
+def ingest_local_documents(
+    data_dir: str,
+    vector_manager: S3VectorManager,
+    embedder: GeminiEmbedder,
+    batch_size: int = 5,
+    target_file: str | None = None,
+    skip_existing: bool = False,
+):
     """
     Scans the data directory for PDFs, extracts pages, computes Gemini embedding 2 vectors,
     and uploads vectors along with rich filterable metadata to Amazon S3 Vectors.
+    Supports targeting a specific file and skipping already processed files.
     """
-    pdf_files = sorted(glob.glob(os.path.join(data_dir, "*.pdf")))
+    processed_cache_path = os.path.join(data_dir, ".processed_files.json")
+    processed_cache = {}
+    if os.path.exists(processed_cache_path):
+        try:
+            with open(processed_cache_path, "r") as f:
+                processed_cache = json.load(f)
+        except Exception:
+            processed_cache = {}
+
+    if target_file:
+        if os.path.isabs(target_file) and os.path.exists(target_file):
+            pdf_files = [target_file]
+        else:
+            cand = os.path.join(data_dir, os.path.basename(target_file))
+            if os.path.exists(cand):
+                pdf_files = [cand]
+            else:
+                matches = glob.glob(os.path.join(data_dir, f"*{target_file}*"))
+                pdf_files = sorted(matches)
+        if not pdf_files:
+            print(f"❌ Target file '{target_file}' not found in '{data_dir}'")
+            return
+    else:
+        pdf_files = sorted(glob.glob(os.path.join(data_dir, "*.pdf")))
+
     if not pdf_files:
         print(f"No PDF documents found in data directory: {data_dir}")
         return
 
-    print(f"\n📂 Found {len(pdf_files)} PDF document(s) in {data_dir} to ingest:")
+    print(f"\n📂 Found {len(pdf_files)} PDF document(s) to process:")
     for pf in pdf_files:
         print(f"  - {os.path.basename(pf)} ({os.path.getsize(pf) / 1024:.1f} KB)")
 
     for pdf_path in pdf_files:
         filename = os.path.basename(pdf_path)
         file_size = os.path.getsize(pdf_path)
+        mtime = os.path.getmtime(pdf_path)
+
+        if skip_existing and filename in processed_cache:
+            prev = processed_cache[filename]
+            if prev.get("size") == file_size:
+                print(f"⏭️ Skipping '{filename}' (already ingested according to .processed_files.json).")
+                continue
+
         print(f"\n" + "=" * 60)
         print(f"🚀 Processing: {filename}")
         print("=" * 60)
@@ -85,6 +127,20 @@ def ingest_local_documents(data_dir: str, vector_manager: S3VectorManager, embed
 
         print(f"🎉 Completed ingestion for {filename} ({total_ingested} pages) into S3 Vectors.")
 
+        # Update cache
+        processed_cache[filename] = {
+            "mtime": mtime,
+            "size": file_size,
+            "pages": total_ingested,
+            "processed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        try:
+            with open(processed_cache_path, "w") as f:
+                json.dump(processed_cache, f, indent=4)
+        except Exception as e:
+            print(f"Note: Could not update .processed_files.json: {e}")
+
+
 
 def interactive_query_loop(vector_manager: S3VectorManager, embedder: GeminiEmbedder, data_dir: str):
     """
@@ -97,7 +153,7 @@ def interactive_query_loop(vector_manager: S3VectorManager, embedder: GeminiEmbe
     print("✨ Amazon S3 Vectors RAG system is ready!")
     print("Commands:")
     print("  - Type your question directly")
-    print("  - Type 'filter:<doc_name>' before question to filter by document name (e.g. 'filter:EY_Financial_report_2025.pdf what is net profit?')")
+    print("  - Type 'filter:<doc_name>' before question to filter by document name (e.g. 'filter:ELECTRONIC DEVICES AND CIRCUITS.pdf explain PN junction diode')")
     print("  - Type 'exit' or 'quit' to stop")
     print("=" * 60)
 
@@ -181,8 +237,16 @@ def interactive_query_loop(vector_manager: S3VectorManager, embedder: GeminiEmbe
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Amazon S3 Vectors Embedding & Ingestion Pipeline")
+    parser.add_argument("--file", type=str, default=None, help="Process only a specific PDF file (name or path)")
+    parser.add_argument("--batch-size", type=int, default=5, help="Batch size for vector upserts (default: 5)")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip files that have already been ingested")
+    parser.add_argument("--no-interactive", action="store_true", help="Do not start interactive QA prompt after ingestion")
+    parser.add_argument("--query-only", action="store_true", help="Skip ingestion and start interactive QA immediately")
+    args = parser.parse_args()
+
     data_dir = os.path.join(PROJECT_ROOT, "data")
-    
+
     print("=" * 60)
     print("Amazon S3 Vectors Embedding & Ingestion Pipeline")
     print(f"  Data Directory: {data_dir}")
@@ -191,12 +255,24 @@ def main():
     vector_manager = S3VectorManager()
     embedder = GeminiEmbedder(model_name="gemini-embedding-2")
 
-    # Ingest data folder
-    ingest_local_documents(data_dir, vector_manager, embedder, batch_size=5)
+    if not args.query_only:
+        # Ingest local PDF documents
+        ingest_local_documents(
+            data_dir=data_dir,
+            vector_manager=vector_manager,
+            embedder=embedder,
+            batch_size=args.batch_size,
+            target_file=args.file,
+            skip_existing=args.skip_existing,
+        )
 
-    # Interactive QA loop
-    interactive_query_loop(vector_manager, embedder, data_dir)
+    # Interactive QA loop (unless --no-interactive was passed)
+    if not args.no_interactive:
+        interactive_query_loop(vector_manager, embedder, data_dir)
+    else:
+        print("\n✅ Ingestion complete. Exiting without interactive QA loop (--no-interactive set).")
 
 
 if __name__ == "__main__":
     main()
+

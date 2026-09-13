@@ -3,13 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Financial RAG Agent • Amazon S3 Vectors</title>
-  <link rel="stylesheet" href="style.css">
-  <!-- Highlight.js for Code Syntax Highlighting -->
+  <title>Academic & Engineering RAG Agent • Amazon S3 Vectors</title>
+  <link rel="stylesheet" href="style.css?v=3.1.0">
+  
+  <!-- Highlight.js for Code Syntax Highlighting (Cloudflare CDNJS) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <!-- Marked for Markdown & Table Parsing -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- KaTeX for High-Speed LaTeX Math Rendering (Cloudflare CDNJS) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+
+  <!-- Marked for Markdown & Table Parsing (Cloudflare CDNJS) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+
+  <!-- MathJax 3 Dual-Engine Math Fallback (Cloudflare CDNJS) -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+      }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-chtml.js"></script>
 </head>
 <body>
   <div class="app-container">
@@ -23,7 +44,7 @@
           </svg>
         </div>
         <div>
-          <h1>Financial RAG Agent</h1>
+          <h1>Academic & Engineering RAG Agent</h1>
           <p class="subtitle">Autonomous LangGraph Agent with Amazon S3 Vectors & SQLite Memory</p>
         </div>
       </div>
@@ -87,21 +108,21 @@
         <!-- Chat Conversation Feed -->
         <div id="chatFeed" class="chat-feed">
           <div class="welcome-card card">
-            <h3>👋 Welcome to Financial RAG Agent</h3>
-            <p>I am an autonomous agent equipped with <strong>Amazon S3 Vectors</strong> retrieval and <strong>SQLite Conversation Memory</strong>.</p>
+            <h3>👋 Welcome to Academic & Engineering RAG Agent</h3>
+            <p>I am an autonomous tutor equipped with <strong>Amazon S3 Vectors</strong> retrieval and <strong>SQLite Conversation Memory</strong> for academic and engineering documents.</p>
             <div class="capabilities-grid">
               <div class="capability-item">
                 <span class="cap-badge cap-direct">⚡ Direct Answer</span>
-                <p>Ask greetings, accounting definitions, or code without wasting vector searches.</p>
-                <div class="prompt-chip" onclick="fillPrompt('Explain the difference between operating margin and net profit margin.')">
-                  "Explain operating vs net margin"
+                <p>Ask conceptual questions, math formulas, or code generation without wasting vector searches.</p>
+                <div class="prompt-chip" onclick="fillPrompt('Explain the difference between a BJT and a MOSFET.')">
+                  "BJT vs MOSFET comparison"
                 </div>
               </div>
               <div class="capability-item">
                 <span class="cap-badge cap-tool">🔍 S3 Vectors Search</span>
-                <p>Ask about specific reports (EY, JPMorgan, annual reports, balance sheets).</p>
-                <div class="prompt-chip" onclick="fillPrompt('What are the key financial highlights and revenue figures in EY Financial Report 2025? Display in a table.')">
-                  "EY 2025 revenue table"
+                <p>Ask about specific textbooks (Electronics, Programming in C, Fluid Mechanics, etc.).</p>
+                <div class="prompt-chip" onclick="fillPrompt('Explain the V-I characteristics of a PN junction diode from Electronic Devices and Circuits. Display key formulas in a table.')">
+                  "PN Diode V-I characteristics table"
                 </div>
               </div>
             </div>
@@ -132,7 +153,7 @@
               <textarea 
                 id="questionInput" 
                 rows="2" 
-                placeholder="Ask about financial reports or paste a screenshot (Ctrl+V / Cmd+V)..." 
+                placeholder="Ask about engineering, circuits, coding, or paste a screenshot (Ctrl+V / Cmd+V)..." 
                 required></textarea>
               <div class="input-actions">
                 <div class="input-left-tools">
@@ -207,7 +228,7 @@
           </div>
 
           <p class="section-desc">
-            Upload financial statements or annual reports directly into your S3 bucket.
+            Upload engineering textbooks, lecture notes, or academic PDFs directly into your S3 bucket.
             The automated worker daemon ingests document embeddings and rich filterable metadata into Amazon S3 Vectors.
           </p>
 
@@ -223,7 +244,7 @@
                   <line x1="15" y1="15" x2="12" y2="12"></line>
                 </svg>
               </div>
-              <h3>Drag & drop your financial PDF here</h3>
+              <h3>Drag & drop your academic PDF here</h3>
               <p>or <span class="browse-link">browse files</span> from your computer</p>
               <span class="file-format-hint">Only .pdf documents are supported</span>
             </div>
@@ -278,6 +299,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=3.1.0"></script>
 </body>
 </html>

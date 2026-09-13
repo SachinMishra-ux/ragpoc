@@ -25,7 +25,7 @@ from src.embedding_service.s3_vector_manager import S3VectorManager
 from src.embedding_service.embedder import GeminiEmbedder
 from src.embedding_service.document_processor import render_pdf_page_to_base64
 
-DB_PATH = os.path.join(PROJECT_ROOT, "financial_checkpoints.db")
+DB_PATH = os.path.join(PROJECT_ROOT, "academic_checkpoints.db")
 
 
 # ---------------------------------------------------------------------------
@@ -51,31 +51,31 @@ _current_turn_context = TurnContext()
 
 
 # ---------------------------------------------------------------------------
-# 3. RAG Tool Definition
+# 3. Academic RAG Tool Definition
 # ---------------------------------------------------------------------------
 def create_rag_tool(vector_manager: S3VectorManager, embedder: GeminiEmbedder):
     @tool
-    def query_financial_knowledge_base(
+    def query_academic_knowledge_base(
         query: str,
         document_name: Optional[str] = None,
         limit: int = 3,
     ) -> str:
-        """Searches the Amazon S3 Vectors index for relevant financial documents, annual reports, balance sheets, income statements, or tables matching the query.
+        """Searches the Amazon S3 Vectors database for relevant academic textbooks, engineering lecture notes, scientific papers, circuit diagrams, code examples, formulas, derivations, and problem solutions matching the query across all subjects.
         Args:
-            query: The search question or semantic query describing the required financial facts or tables.
-            document_name: Optional specific document filename to filter on (e.g. 'EY_Financial_report_2025.pdf', 'JPM_Annual_2023.pdf').
+            query: The search question or semantic query describing the academic topic, concept, formula, algorithm, theorem, or definition.
+            document_name: Optional specific document or textbook filename to restrict the search to (if requested by the user).
             limit: Number of context pages to retrieve (default: 3).
         Returns:
             Structured text excerpt with page numbers, document names, and content snippets.
         """
         global _current_turn_context
         _current_turn_context.tool_called = True
-        print(f"\n[Tool: query_financial_knowledge_base] Executing vector search for: '{query}' (doc_filter: {document_name}, limit: {limit})")
+        print(f"\n[Tool: query_academic_knowledge_base] Executing vector search for: '{query}' (doc_filter: {document_name}, limit: {limit})")
 
         try:
             # 1. Embed query using Gemini Embedding 2 (multimodal if user attached screenshot)
             if _current_turn_context.query_image_pil is not None:
-                print(f"[Tool: query_financial_knowledge_base] Performing multimodal (screenshot + text) S3 vector search")
+                print(f"[Tool: query_academic_knowledge_base] Performing multimodal (screenshot + text) S3 vector search")
                 query_emb = embedder.embed_multimodal(text=query, image=_current_turn_context.query_image_pil)
             else:
                 query_emb = embedder.embed_text(query)
@@ -85,7 +85,11 @@ def create_rag_tool(vector_manager: S3VectorManager, embedder: GeminiEmbedder):
             results = vector_manager.search(query_emb, limit=limit, filter_expr=filter_expr)
 
             if not results:
-                return f"No matching financial documents or records found in Amazon S3 Vectors for query: '{query}'."
+                return (
+                    f"No matching documents found in Amazon S3 Vectors for query: '{query}'. "
+                    f"Please proceed to answer the student's question accurately using your general academic foundational knowledge, "
+                    f"and explicitly mention that specific textbook excerpts were not found in the indexed library documents."
+                )
 
             output_lines = [f"Found {len(results)} matching page(s) in Amazon S3 Vectors:\n"]
 
@@ -125,7 +129,7 @@ def create_rag_tool(vector_manager: S3VectorManager, embedder: GeminiEmbedder):
             print(f"Error querying S3 Vectors inside tool: {e}")
             return f"Error occurred while searching Amazon S3 Vectors: {str(e)}"
 
-    return query_financial_knowledge_base
+    return query_academic_knowledge_base
 
 
 def extract_message_text(content: Any) -> str:
@@ -161,7 +165,7 @@ def extract_message_text(content: Any) -> str:
 # ---------------------------------------------------------------------------
 # 4. RAG Agent Builder & Manager
 # ---------------------------------------------------------------------------
-class FinancialRAGAgent:
+class AcademicRAGAgent:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -180,29 +184,46 @@ class FinancialRAGAgent:
             google_api_key=api_key,
         )
 
-        # Define RAG Tool
+        # Define Academic RAG Tool
         self.rag_tool = create_rag_tool(self.vector_manager, self.embedder)
 
-        # Define System Prompt for Selective Tool Calling
+        # Define Dynamic System Prompt for All Academic Disciplines
         self.system_prompt = (
-            "You are an expert financial analyst and conversational AI assistant for corporate financial reports, "
-            "annual statements, and SEC filings. You have access to a tool named `query_financial_knowledge_base` "
-            "that searches and retrieves relevant document pages from an Amazon S3 Vectors database.\n\n"
-            "CRITICAL TOOL USAGE POLICY:\n"
-            "1. ONLY invoke the `query_financial_knowledge_base` tool when the user's question asks for specific, "
-            "factual, quantitative, or contextual details about companies, financial reports, annual statements, "
-            "audits, balance sheets, revenue numbers, margins, or proprietary filings (e.g. EY Financial Report 2025, "
-            "JPMorgan Chase Annual Report 2023, etc.).\n"
-            "2. DO NOT call the tool for general conversation, greetings (e.g., 'hello', 'how are you', 'what can you do?'), "
-            "general accounting principles, high-level definitions (e.g., 'what is EBITDA?'), math formulas, or code generation "
-            "unrelated to specific document data. Answer these directly from your knowledge base.\n"
-            "3. When you invoke the tool, strictly ground your final answer on the retrieved excerpts. Always cite the "
-            "document name and page number (e.g., '[Source: EY_Financial_report_2025.pdf, Page 14]').\n"
-            "4. TABULAR FORMATTING: Whenever asked to present financial figures, summaries, comparisons, or data in a "
-            "tabular format, ALWAYS construct clean, well-formatted Markdown tables with clear headers and aligned columns.\n"
-            "5. CODE FORMATTING: Whenever asked to provide code (Python, SQL, financial calculations), ALWAYS format it "
-            "inside proper Markdown code blocks specifying the language identifier (e.g. ```python ... ```).\n"
-            "6. Be direct, professional, and accurate. If information is not found in the retrieved documents, state that clearly."
+            "You are an expert Professor and Academic AI Research Assistant with access to a comprehensive university-level "
+            "academic library stored in an Amazon S3 Vectors database. You have access to a tool named `query_academic_knowledge_base` "
+            "that searches and retrieves relevant textbook pages, lecture notes, diagrams, and technical documents from this database.\n\n"
+            "CRITICAL WORKFLOW & TOOL CALLING POLICY:\n"
+            "1. MANDATORY VECTOR SEARCH FOR ALL ACADEMIC QUESTIONS:\n"
+            "   Whenever the user asks ANY academic, educational, scientific, engineering, technical, theoretical, or conceptual "
+            "   question across ANY subject (such as programming, computer science, electronics, circuits, fluid mechanics, "
+            "   thermodynamics, physics, chemistry, mathematics, mechanics, or any other academic discipline), YOU MUST ALWAYS "
+            "   INVOKE the `query_academic_knowledge_base` tool FIRST to search the vector database for relevant literature "
+            "   and textbook pages. Never answer academic questions directly from parametric memory on the initial turn without searching.\n"
+            "2. PARAMETRIC FALLBACK POLICY (WHEN NO DOCUMENTS ARE FOUND):\n"
+            "   If the `query_academic_knowledge_base` tool returns no matching documents, or if the retrieved excerpts do not contain "
+            "   sufficient details to fully answer the question, ONLY THEN should you answer the question using your general academic "
+            "   foundational knowledge. When this occurs, politely inform the student that specific textbook excerpts were not found "
+            "   in the indexed library, and provide your own rigorous, step-by-step academic explanation.\n"
+            "3. EXEMPTION FOR CASUAL / CONVERSATIONAL QUERIES ONLY:\n"
+            "   The ONLY questions where you must NOT invoke the tool are pure non-academic conversational pleasantries and greetings "
+            "   (e.g., 'hello', 'hi', 'how are you', 'who are you', 'what can you do', 'thank you', 'goodbye'). For these, reply warmly "
+            "   and encourage the student to ask an academic question.\n"
+            "4. GROUNDING & CITATIONS:\n"
+            "   When the tool retrieves relevant textbook excerpts, ground your final answer on those materials and ALWAYS cite the "
+            "   specific document name and page number (e.g., '[Source: <document_name>, Page <page_number>]').\n"
+            "5. MATHEMATICAL & FORMULA NOTATION:\n"
+            "   ALWAYS format all mathematical formulas, equations, integrals, and derivations using standard LaTeX notation "
+            "   ($...$ for inline math, and $$...$$ for centered block equations).\n"
+            "6. CODE & ALGORITHMIC FORMATTING:\n"
+            "   Whenever providing or explaining code (C, C++, Python, Java, SQL, etc.), ALWAYS format it inside proper Markdown code blocks "
+            "   specifying the language identifier (e.g., ```c ... ```), include clear comments, and state time/space complexities where relevant.\n"
+            "7. TABULAR FORMATTING:\n"
+            "   Whenever presenting comparisons, truth tables, properties, or structured parameters, ALWAYS construct clean Markdown tables "
+            "   with clear headers and aligned columns.\n"
+            "8. CIRCUIT & DIAGRAM ANALYSIS:\n"
+            "   When the student attaches a screenshot or asks about a circuit, diagram, or graph, provide a detailed step-by-step physical "
+            "   and analytical explanation of the visual components.\n"
+            "9. Be pedagogical, rigorous, encouraging, and clear."
         )
 
         # Compile Agent with Checkpointer
@@ -212,7 +233,7 @@ class FinancialRAGAgent:
             system_prompt=self.system_prompt,
             checkpointer=self.memory,
         )
-        print("✅ Financial RAG Agent successfully compiled with SQLite checkpointer!")
+        print("✅ Academic & Engineering RAG Agent successfully compiled with SQLite checkpointer!")
 
     def run(
         self,
@@ -260,7 +281,7 @@ class FinancialRAGAgent:
         if document_name:
             query_text = f"[Filter: restrict document to '{document_name}'] {question}"
 
-        print(f"\n🤖 Running Financial RAG Agent [Thread: {active_thread_id}]...")
+        print(f"\n🤖 Running Academic RAG Agent [Thread: {active_thread_id}]...")
         print(f"User Query: {question} (Image attached: {bool(clean_b64)})")
 
         try:
@@ -353,12 +374,20 @@ class FinancialRAGAgent:
             return []
 
 
+# Backward compatibility alias
+FinancialRAGAgent = AcademicRAGAgent
+
 # Global singleton agent
-_global_agent: Optional[FinancialRAGAgent] = None
+_global_agent: Optional[AcademicRAGAgent] = None
 
 
-def get_agent() -> FinancialRAGAgent:
+def get_academic_agent() -> AcademicRAGAgent:
     global _global_agent
     if _global_agent is None:
-        _global_agent = FinancialRAGAgent()
+        _global_agent = AcademicRAGAgent()
     return _global_agent
+
+
+# Backward compatibility alias
+get_agent = get_academic_agent
+

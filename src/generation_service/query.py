@@ -21,12 +21,12 @@ from src.generation_service.gemini_rag_llm import GeminiRAG
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Query the Financial RAG pipeline using Amazon S3 Vectors."
+        description="Query the Academic & Engineering RAG pipeline using Amazon S3 Vectors."
     )
     parser.add_argument(
         "question",
         type=str,
-        help="The question you want to ask about the financial data.",
+        help="The question you want to ask about the academic/engineering textbooks.",
     )
     parser.add_argument(
         "--limit",
@@ -38,7 +38,7 @@ def parse_args():
         "--filter-doc",
         type=str,
         default=None,
-        help="Filter results to a specific document name (e.g., 'EY_Financial_report_2025.pdf').",
+        help="Filter results to a specific textbook name (e.g., 'ELECTRONIC DEVICES AND CIRCUITS.pdf').",
     )
     parser.add_argument(
         "--filter-page",
@@ -86,7 +86,7 @@ def main():
         filter_expr = None
 
     print("=" * 60)
-    print("Executing Financial RAG Query against Amazon S3 Vectors...")
+    print("Executing Academic & Engineering RAG Query against Amazon S3 Vectors...")
     print(f"Question:      '{args.question}'")
     print(f"Vector Bucket: '{vector_bucket}'")
     print(f"Vector Index:  '{vector_index}'")

@@ -5,13 +5,32 @@
         "processed_at": "2026-08-30 20:02:34"
     },
     "JPM_SE_Annual_2023.pdf": {
-        "mtime": 1779023742.326152,
+        "mtime": 1789147992.2928205,
         "size": 1604093,
-        "processed_at": "2026-08-30 20:08:32"
+        "pages": 294,
+        "processed_at": "2026-09-13 18:56:01"
     },
     "EY_Financial_report_2025.pdf": {
         "mtime": 1779945586.8614888,
         "size": 5568136,
         "processed_at": "2026-08-30 20:47:56"
+    },
+    "ELECTRONIC DEVICES AND CIRCUITS.pdf": {
+        "mtime": 1789321694.0331964,
+        "size": 2125718,
+        "pages": 110,
+        "processed_at": "2026-09-13 18:48:33"
+    },
+    "PROGRAMMING FOR PROBLEM SOLVING[R22].pdf": {
+        "mtime": 1789321736.6190884,
+        "size": 666386,
+        "pages": 65,
+        "processed_at": "2026-09-13 18:57:37"
+    },
+    "PROPERTIES OF FLUIDS.pdf": {
+        "mtime": 1789321717.0704732,
+        "size": 1474412,
+        "pages": 46,
+        "processed_at": "2026-09-13 18:58:42"
     }
 }

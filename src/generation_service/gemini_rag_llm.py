@@ -14,10 +14,11 @@ class GeminiRAG:
             
         self.llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature, google_api_key=api_key)
         self.system_prompt = (
-            "You are an assistant for question-answering tasks. "
-            "Use the provided image context (which represents pages of financial PDFs) to answer the question. "
-            "If you don't know the answer, say that you don't know. "
-            "Provide a detailed, accurate response based ONLY on the provided context."
+            "You are an expert academic and engineering tutor. "
+            "Use the provided image context (which represents pages of academic textbooks, lecture slides, circuit diagrams, and technical documents) to answer the student's question. "
+            "Provide a detailed, step-by-step, pedagogical, and accurate response based on the provided context. "
+            "Format math equations using LaTeX ($...$ or $$...$$) and code inside proper Markdown code blocks. "
+            "If the answer cannot be determined from the provided context, state that clearly."
         )
 
     def answer_question(self, question: str, base64_images: list[str]) -> str:

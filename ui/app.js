@@ -73,6 +73,116 @@ if (window.marked) {
   });
 }
 
+/**
+ * Renders Markdown content and LaTeX math equations ($...$ inline and $$...$$ block)
+ * using KaTeX with protection against Markdown character collisions (like _ and * in equations).
+ */
+function renderMarkdownWithMath(rawText) {
+  if (!rawText) return "";
+
+  // If KaTeX is not loaded on window, fallback to marked.parse and let MathJax typeset
+  if (typeof katex === "undefined" || !window.katex) {
+    console.warn("[Academic RAG] KaTeX not yet loaded; using marked.parse (MathJax will typeset DOM elements).");
+    return marked.parse(rawText);
+  }
+
+  const mathPlaceholders = [];
+
+  // Step 1: Protect code blocks (fenced ```...``` and inline `...`)
+  const codeBlocks = [];
+  let processed = rawText.replace(/(```[\s\S]*?```|`[^`\n]+`)/g, (match) => {
+    const placeholder = `%%CODE_BLOCK_${codeBlocks.length}%%`;
+    codeBlocks.push(match);
+    return placeholder;
+  });
+
+  // Step 2: Extract block/display math $$...$$ and \[...\]
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, equation) => {
+    const placeholder = `%%MATH_BLOCK_${mathPlaceholders.length}%%`;
+    let rendered = "";
+    try {
+      rendered = `<div class="katex-display-wrapper">${katex.renderToString(equation.trim(), {
+        displayMode: true,
+        throwOnError: false
+      })}</div>`;
+    } catch (err) {
+      rendered = `<div class="katex-error">${escapeHtml(match)}</div>`;
+    }
+    mathPlaceholders.push({ placeholder, rendered, isBlock: true });
+    return placeholder;
+  });
+
+  processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, equation) => {
+    const placeholder = `%%MATH_BLOCK_${mathPlaceholders.length}%%`;
+    let rendered = "";
+    try {
+      rendered = `<div class="katex-display-wrapper">${katex.renderToString(equation.trim(), {
+        displayMode: true,
+        throwOnError: false
+      })}</div>`;
+    } catch (err) {
+      rendered = `<div class="katex-error">${escapeHtml(match)}</div>`;
+    }
+    mathPlaceholders.push({ placeholder, rendered, isBlock: true });
+    return placeholder;
+  });
+
+  // Step 3: Extract inline math $...$ and \(...\)
+  processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, equation) => {
+    const placeholder = `%%MATH_INLINE_${mathPlaceholders.length}%%`;
+    let rendered = "";
+    try {
+      rendered = katex.renderToString(equation.trim(), {
+        displayMode: false,
+        throwOnError: false
+      });
+    } catch (err) {
+      rendered = escapeHtml(match);
+    }
+    mathPlaceholders.push({ placeholder, rendered, isBlock: false });
+    return placeholder;
+  });
+
+  processed = processed.replace(/(?<!\\)\$([^\$\n]+?)(?<!\\)\$/g, (match, equation) => {
+    // Avoid false positives for standalone currency numbers (e.g. $10, $5.99)
+    if (/^\s*\d+([.,]\d+)?\s*$/.test(equation)) {
+      return match;
+    }
+    const placeholder = `%%MATH_INLINE_${mathPlaceholders.length}%%`;
+    let rendered = "";
+    try {
+      rendered = katex.renderToString(equation.trim(), {
+        displayMode: false,
+        throwOnError: false
+      });
+    } catch (err) {
+      rendered = escapeHtml(match);
+    }
+    mathPlaceholders.push({ placeholder, rendered, isBlock: false });
+    return placeholder;
+  });
+
+  // Step 4: Restore code blocks before marked runs
+  codeBlocks.forEach((code, idx) => {
+    processed = processed.replace(`%%CODE_BLOCK_${idx}%%`, () => code);
+  });
+
+  // Step 5: Parse Markdown into HTML
+  let html = marked.parse(processed);
+
+  // Step 6: Restore rendered math into HTML
+  mathPlaceholders.forEach(({ placeholder, rendered, isBlock }) => {
+    if (isBlock) {
+      // Remove any <p> tag that marked may have wrapped around the block placeholder
+      const pWrapped = new RegExp(`<p>\\s*${placeholder}\\s*<\\/p>`, "g");
+      html = html.replace(pWrapped, rendered);
+    }
+    html = html.replace(placeholder, () => rendered);
+  });
+
+  return html;
+}
+
 // -----------------------------------------------------------------------------
 // 1. Tab Switching
 // -----------------------------------------------------------------------------
@@ -202,21 +312,21 @@ function startNewConversation() {
   threadSelect.value = "";
   chatFeed.innerHTML = `
     <div class="welcome-card card">
-      <h3>👋 Welcome to Financial RAG Agent</h3>
-      <p>I am an autonomous agent equipped with <strong>Amazon S3 Vectors</strong> retrieval and <strong>SQLite Conversation Memory</strong>.</p>
+      <h3>👋 Welcome to Academic & Engineering RAG Agent</h3>
+      <p>I am an autonomous tutor equipped with <strong>Amazon S3 Vectors</strong> retrieval and <strong>SQLite Conversation Memory</strong> for academic and engineering documents.</p>
       <div class="capabilities-grid">
         <div class="capability-item">
           <span class="cap-badge cap-direct">⚡ Direct Answer</span>
-          <p>Ask greetings, accounting definitions, or code without wasting vector searches.</p>
-          <div class="prompt-chip" onclick="fillPrompt('Explain the difference between operating margin and net profit margin.')">
-            "Explain operating vs net margin"
+          <p>Ask conceptual questions, math formulas, or code generation without wasting vector searches.</p>
+          <div class="prompt-chip" onclick="fillPrompt('Explain the difference between a BJT and a MOSFET.')">
+            "BJT vs MOSFET comparison"
           </div>
         </div>
         <div class="capability-item">
           <span class="cap-badge cap-tool">🔍 S3 Vectors Search</span>
-          <p>Ask about specific reports (EY, JPMorgan, annual reports, balance sheets).</p>
-          <div class="prompt-chip" onclick="fillPrompt('What are the key financial highlights and revenue figures in EY Financial Report 2025? Display in a table.')">
-            "EY 2025 revenue table"
+          <p>Ask about specific textbooks (Electronics, Programming in C, Fluid Mechanics, etc.).</p>
+          <div class="prompt-chip" onclick="fillPrompt('Explain the V-I characteristics of a PN junction diode from Electronic Devices and Circuits. Display key formulas in a table.')">
+            "PN Diode V-I characteristics table"
           </div>
         </div>
       </div>
@@ -521,23 +631,36 @@ function renderAgentMessage(data) {
   const sources = data.sources || [];
   const images = data.images || [];
 
-  const badgeHtml = isTool
-    ? `<span class="decision-badge decision-tool" title="Agent dynamically queried Amazon S3 Vectors index">
-         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-           <circle cx="11" cy="11" r="8"></circle>
-           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-         </svg>
-         S3 Vectors (${data.pages_retrieved || sources.length} pages)
-       </span>`
-    : `<span class="decision-badge decision-direct" title="Agent answered directly without querying S3 Vectors">
-         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-         </svg>
-         ⚡ Direct Answer
-       </span>`;
+  let badgeHtml = "";
+  if (isTool) {
+    if (sources.length > 0) {
+      badgeHtml = `<span class="decision-badge decision-tool" title="Agent retrieved matching context from Amazon S3 Vectors">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          S3 Vectors (${data.pages_retrieved || sources.length} pages)
+        </span>`;
+    } else {
+      badgeHtml = `<span class="decision-badge decision-tool" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3);" title="Searched Amazon S3 Vectors (no document matches found); answered from general academic knowledge">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          S3 Vectors Searched • Parametric Knowledge
+        </span>`;
+    }
+  } else {
+    badgeHtml = `<span class="decision-badge decision-direct" title="Casual conversation / greeting (no vector search needed)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+          ⚡ Direct Greeting
+        </span>`;
+  }
 
-  // Parse markdown
-  const answerMarkdown = marked.parse(data.answer || "");
+  // Parse markdown with LaTeX math equations
+  const answerMarkdown = renderMarkdownWithMath(data.answer || "");
 
   // Optional Citations Section
   let citationsHtml = "";
@@ -600,7 +723,7 @@ function renderAgentMessage(data) {
   }
 
   msgEl.innerHTML = `
-    <div class="chat-avatar chat-avatar-agent" title="Financial RAG Agent">
+    <div class="chat-avatar chat-avatar-agent" title="Academic RAG Agent">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2a10 10 0 1 0 10 10H12V2z"></path>
         <path d="M12 12 2.1 10.4a10 10 0 0 1 9.9-8.4z"></path>
@@ -609,7 +732,7 @@ function renderAgentMessage(data) {
     <div class="chat-bubble">
       <div class="chat-header-row">
         <div class="chat-sender-meta">
-          <span class="chat-sender-name">Financial RAG Agent</span>
+          <span class="chat-sender-name">Academic RAG Agent</span>
           ${badgeHtml}
         </div>
         <span class="chat-time">${formatTime(new Date())}</span>
@@ -672,6 +795,15 @@ function renderAgentMessage(data) {
   }
 
   chatFeed.appendChild(msgEl);
+
+  // If MathJax is loaded and any unrendered math remains, typeset the new message element
+  if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {
+    try {
+      window.MathJax.typesetPromise([msgEl]).catch(err => {
+        console.warn("[Academic RAG] MathJax typesetting notice:", err);
+      });
+    } catch (err) {}
+  }
 }
 
 function renderErrorMessage(text) {

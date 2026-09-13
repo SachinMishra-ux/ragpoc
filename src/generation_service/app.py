@@ -21,9 +21,16 @@ load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "src", ".env"))
 from src.embedding_service.document_processor import render_pdf_page_to_base64
 from src.embedding_service.embedder import GeminiEmbedder
 from src.embedding_service.s3_vector_manager import S3VectorManager
-from src.generation_service.gemini_rag_llm import GeminiRAG
-from src.generation_service.validation import QueryRequest, QueryResponse, UploadResponse
-from src.generation_service.agent import get_agent, FinancialRAGAgent
+from src.generation_service.validation import (
+    QueryRequest,
+    QueryResponse,
+    UploadResponse,
+    DeleteDocumentResponse,
+    DeleteVectorsRequest,
+    DeleteVectorsResponse,
+    PurgeIndexResponse,
+)
+from src.generation_service.agent import get_agent, AcademicRAGAgent
 
 AWS_REGION = os.getenv("AWS_REGION", "eu-north-1")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "financial-rag-documents-001")
@@ -41,8 +48,8 @@ S3_VECTOR_INDEX_NAME = (
 
 # Initialize FastAPI App
 app = FastAPI(
-    title="Financial RAG Autonomous Agent (Amazon S3 Vectors)",
-    description="REST API for answering questions about financial PDFs using a dynamic LangGraph Agent, Amazon S3 Vectors, and SQLite Checkpoint Memory.",
+    title="Academic & Engineering RAG Autonomous Agent (Amazon S3 Vectors)",
+    description="REST API for answering questions about engineering, coding, and academic textbooks using a dynamic LangGraph Agent, Amazon S3 Vectors, and SQLite Checkpoint Memory.",
     version="3.0.0",
 )
 
@@ -56,20 +63,21 @@ app.add_middleware(
 )
 
 # Global clients
-agent_instance: FinancialRAGAgent | None = None
+agent_instance: AcademicRAGAgent | None = None
 s3_client = None
 
 
 @app.on_event("startup")
 def startup_event():
     global agent_instance, s3_client
-    print("Initializing LangGraph Financial RAG Agent with Amazon S3 Vectors & SQLite Checkpointer...")
+    print("Initializing LangGraph Academic & Engineering RAG Agent with Amazon S3 Vectors & SQLite Checkpointer...")
     try:
         agent_instance = get_agent()
         s3_client = boto3.client("s3", region_name=AWS_REGION)
         print("All clients and LangGraph agent successfully initialized.")
     except Exception as e:
         print(f"ERROR: Initialization failed during startup: {e}")
+
 
 
 @app.options("/query")
@@ -214,6 +222,135 @@ def list_indexed_documents():
     return {"documents": sorted(list(docs))}
 
 
+def get_vector_manager() -> S3VectorManager:
+    global agent_instance
+    if agent_instance and agent_instance.vector_manager:
+        return agent_instance.vector_manager
+    return S3VectorManager(
+        vector_bucket_name=S3_VECTOR_BUCKET_NAME,
+        index_name=S3_VECTOR_INDEX_NAME,
+        region_name=AWS_REGION,
+    )
+
+
+@app.options("/documents/{document_name}")
+def options_delete_document(document_name: str):
+    return {}
+
+
+@app.delete("/documents/{document_name}", response_model=DeleteDocumentResponse, status_code=status.HTTP_200_OK)
+def delete_document(document_name: str, delete_s3_file: bool = True):
+    """
+    Deletes all vector embeddings associated with a specific document from Amazon S3 Vectors.
+    Optionally deletes the raw PDF from the S3 document bucket and local data directory.
+    """
+    try:
+        vm = get_vector_manager()
+        deleted_count = vm.delete_document_vectors(document_name)
+
+        s3_deleted = False
+        if delete_s3_file:
+            try:
+                s3 = boto3.client("s3", region_name=AWS_REGION)
+                s3.delete_object(Bucket=S3_BUCKET_NAME, Key=document_name)
+                s3_deleted = True
+                print(f"🗑️ Deleted s3://{S3_BUCKET_NAME}/{document_name}")
+            except Exception as e:
+                print(f"ℹ️ Could not delete S3 object s3://{S3_BUCKET_NAME}/{document_name}: {e}")
+
+        # Also remove from local data directory if present
+        local_path = os.path.join(PROJECT_ROOT, "data", document_name)
+        if os.path.exists(local_path):
+            try:
+                os.remove(local_path)
+                print(f"🗑️ Deleted local file {local_path}")
+            except Exception as e:
+                print(f"ℹ️ Could not delete local file: {e}")
+
+        return DeleteDocumentResponse(
+            status="success",
+            document_name=document_name,
+            vectors_deleted=deleted_count,
+            s3_object_deleted=s3_deleted,
+            message=f"Successfully deleted {deleted_count} vector(s) for document '{document_name}' from Amazon S3 Vectors.",
+        )
+    except Exception as e:
+        print(f"Error deleting document '{document_name}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete document '{document_name}': {e}",
+        )
+
+
+@app.options("/vectors")
+def options_delete_vectors():
+    return {}
+
+
+@app.delete("/vectors", response_model=DeleteVectorsResponse, status_code=status.HTTP_200_OK)
+def delete_vectors(request: DeleteVectorsRequest):
+    """
+    Deletes specific vector embeddings by key from Amazon S3 Vectors.
+    """
+    if not request.keys:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The 'keys' list cannot be empty.",
+        )
+    try:
+        vm = get_vector_manager()
+        vm.delete_vectors(request.keys)
+        return DeleteVectorsResponse(
+            status="success",
+            keys_deleted=len(request.keys),
+            message=f"Successfully deleted {len(request.keys)} vector(s) from index '{vm.index_name}'.",
+        )
+    except Exception as e:
+        print(f"Error deleting vectors: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete vectors: {e}",
+        )
+
+
+@app.delete("/index", response_model=PurgeIndexResponse, status_code=status.HTTP_200_OK)
+def purge_vector_index(confirm: bool = False, recreate: bool = True):
+    """
+    Purges/deletes the entire Amazon S3 Vector Index.
+    Requires query param ?confirm=true.
+    If ?recreate=true (default), automatically re-initializes an empty index.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Safety confirmation required. Provide query parameter ?confirm=true to delete the index.",
+        )
+    try:
+        vm = get_vector_manager()
+        vm.delete_index()
+        recreated = False
+        if recreate:
+            vm.ensure_index(dimension=3072)
+            recreated = True
+
+        return PurgeIndexResponse(
+            status="success",
+            index_name=vm.index_name,
+            recreated=recreated,
+            message=(
+                f"Successfully deleted S3 Vector Index '{vm.index_name}'."
+                + (" Recreated empty index." if recreated else "")
+            ),
+        )
+    except Exception as e:
+        print(f"Error purging S3 Vector Index: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to purge S3 Vector Index: {e}",
+        )
+
+
+
 @app.get("/health", status_code=status.HTTP_200_OK)
 def health_check():
     global agent_instance
@@ -232,7 +369,7 @@ def health_check():
             "vector_bucket": S3_VECTOR_BUCKET_NAME,
             "vector_index": S3_VECTOR_INDEX_NAME,
             "llm_initialized": llm_ok,
-            "checkpointer": "SQLite (financial_checkpoints.db)",
+            "checkpointer": "SQLite (academic_checkpoints.db)",
         },
     }
 
