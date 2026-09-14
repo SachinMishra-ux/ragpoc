@@ -135,11 +135,23 @@ def ingest_document_file(doc_path, bucket_name, object_key, vector_manager, embe
 ingest_pdf_file = ingest_document_file
 
 
+# Track recently processed documents to prevent duplicate processing if twin SQS messages arrive
+_recently_processed = {}  # (bucket, key) -> timestamp
+DEDUPLICATION_WINDOW_SECONDS = 180  # 3 minutes cooldown
+
+
 def _process_single_s3_object(bucket_name, object_key, s3_client, vector_manager, embedder):
     """Downloads a single object from S3 and triggers multi-format ingestion."""
     ext = os.path.splitext(object_key)[1].lower()
     if ext not in SUPPORTED_EXTENSIONS:
         print(f"Ignoring unsupported file format '{ext}': {object_key}. Supported: {SUPPORTED_EXTENSIONS}")
+        return True
+
+    dedup_key = (bucket_name, object_key)
+    now = time.time()
+    last_processed = _recently_processed.get(dedup_key, 0)
+    if now - last_processed < DEDUPLICATION_WINDOW_SECONDS:
+        print(f"\n⚡ Skipping duplicate SQS notification for s3://{bucket_name}/{object_key} (already processed {int(now - last_processed)}s ago).")
         return True
 
     print(f"\nProcessing detected document in S3: s3://{bucket_name}/{object_key}")
@@ -150,7 +162,10 @@ def _process_single_s3_object(bucket_name, object_key, s3_client, vector_manager
         s3_client.download_file(bucket_name, object_key, tmp_path)
         print(f"Downloaded to {tmp_path}")
 
-        return ingest_document_file(tmp_path, bucket_name, object_key, vector_manager, embedder)
+        ingested = ingest_document_file(tmp_path, bucket_name, object_key, vector_manager, embedder)
+        if ingested:
+            _recently_processed[dedup_key] = time.time()
+        return ingested
     except Exception as e:
         print(f"Error downloading or processing s3://{bucket_name}/{object_key}: {e}")
         return False

@@ -62,6 +62,9 @@ CONTENT_TYPES = {
 }
 
 
+MANUAL_ENQUEUE_SQS = os.getenv("MANUAL_ENQUEUE_SQS", "false").lower() == "true"
+
+
 def enqueue_sqs_document_event(bucket: str, key: str) -> str | None:
     """Enqueues an S3 object upload event notification to SQS."""
     if not SQS_QUEUE_URL:
@@ -220,8 +223,9 @@ async def upload_document(file: UploadFile = File(...)):
         )
         print(f"Successfully uploaded {s3_key} to S3.")
 
-        # Enqueue SQS notification for asynchronous worker ingestion
-        sqs_msg_id = enqueue_sqs_document_event(S3_BUCKET_NAME, s3_key)
+        # S3 automatically triggers SQS via bucket event notifications.
+        # Only manually enqueue if MANUAL_ENQUEUE_SQS is explicitly enabled.
+        sqs_msg_id = enqueue_sqs_document_event(S3_BUCKET_NAME, s3_key) if MANUAL_ENQUEUE_SQS else None
 
         return UploadResponse(
             status="success",
@@ -229,7 +233,7 @@ async def upload_document(file: UploadFile = File(...)):
             bucket=S3_BUCKET_NAME,
             s3_key=s3_key,
             file_type=ext.lstrip("."),
-            sqs_queued=bool(sqs_msg_id),
+            sqs_queued=True,
             message=(
                 f"Successfully uploaded {filename} to s3://{S3_BUCKET_NAME}/{s3_key}. "
                 f"Ingestion into Amazon S3 Vectors has been queued."
@@ -304,8 +308,8 @@ async def upload_bulk_documents(files: list[UploadFile] = File(...)):
             )
             print(f"Uploaded bulk item {filename} ({file_size} bytes) to s3://{S3_BUCKET_NAME}/{s3_key}")
 
-            # Enqueue SQS event
-            sqs_msg_id = enqueue_sqs_document_event(S3_BUCKET_NAME, s3_key)
+            # S3 automatically triggers SQS via bucket event notifications.
+            sqs_msg_id = enqueue_sqs_document_event(S3_BUCKET_NAME, s3_key) if MANUAL_ENQUEUE_SQS else None
 
             uploaded_records.append(
                 UploadedFileInfo(
@@ -314,7 +318,7 @@ async def upload_bulk_documents(files: list[UploadFile] = File(...)):
                     bucket=S3_BUCKET_NAME,
                     file_size=file_size,
                     file_type=ext.lstrip("."),
-                    sqs_queued=bool(sqs_msg_id),
+                    sqs_queued=True,
                     status="uploaded",
                 )
             )

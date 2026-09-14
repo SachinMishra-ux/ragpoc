@@ -185,7 +185,7 @@ class S3VectorManager:
             doc_name = extra_meta.get("document_name", "doc")
             page_num = extra_meta.get("page_number", idx + 1)
             clean_doc = doc_name.replace(" ", "_").replace("/", "_")
-            vector_key = f"{clean_doc}#page_{page_num}#{uuid.uuid4().hex[:8]}"
+            vector_key = f"{clean_doc}#page_{page_num}"
 
             # All metadata fields below are filterable by default in S3 Vectors
             meta = {
