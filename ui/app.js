@@ -36,13 +36,13 @@ const removeAttachedImageBtn = document.getElementById("removeAttachedImageBtn")
 const attachImageBtn = document.getElementById("attachImageBtn");
 const screenshotFileInput = document.getElementById("screenshotFileInput");
 
-// Upload Elements
+// Upload Elements (Multi-Format & Bulk)
 const dropZone = document.getElementById("dropZone");
 const fileInput = document.getElementById("fileInput");
-const fileDetails = document.getElementById("fileDetails");
-const selectedFileName = document.getElementById("selectedFileName");
-const selectedFileSize = document.getElementById("selectedFileSize");
-const removeFileBtn = document.getElementById("removeFileBtn");
+const fileStagingArea = document.getElementById("fileStagingArea");
+const stagedCountBadge = document.getElementById("stagedCountBadge");
+const stagedFilesList = document.getElementById("stagedFilesList");
+const clearAllFilesBtn = document.getElementById("clearAllFilesBtn");
 const uploadSubmitBtn = document.getElementById("uploadSubmitBtn");
 const uploadStatusBox = document.getElementById("uploadStatusBox");
 
@@ -52,7 +52,7 @@ const modalImageSrc = document.getElementById("modalImageSrc");
 const modalImageTitle = document.getElementById("modalImageTitle");
 const modalCloseBtn = document.getElementById("modalCloseBtn");
 
-let currentSelectedFile = null;
+let stagedFiles = [];
 let currentThreadId = generateUUID();
 let currentAttachedImageBase64 = null;
 let currentAttachedImageName = "";
@@ -837,8 +837,23 @@ function formatTime(date) {
 }
 
 // -----------------------------------------------------------------------------
-// 4. File Upload (Tab 2)
 // -----------------------------------------------------------------------------
+// 4. File Upload (Tab 2 - Multi-Format & Bulk Support)
+// -----------------------------------------------------------------------------
+const SUPPORTED_EXTS = [".pdf", ".docx", ".doc", ".pptx", ".ppt"];
+
+function getFileFormatMeta(filename) {
+  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  if (ext === ".pdf") {
+    return { label: "PDF", iconClass: "file-icon-pdf" };
+  } else if (ext === ".docx" || ext === ".doc") {
+    return { label: "WORD", iconClass: "file-icon-word" };
+  } else if (ext === ".pptx" || ext === ".ppt") {
+    return { label: "PPT", iconClass: "file-icon-ppt" };
+  }
+  return { label: "DOC", iconClass: "file-icon-other" };
+}
+
 dropZone.addEventListener("click", () => fileInput.click());
 
 ["dragenter", "dragover"].forEach(eventName => {
@@ -856,80 +871,181 @@ dropZone.addEventListener("click", () => fileInput.click());
 });
 
 dropZone.addEventListener("drop", (e) => {
-  const files = e.dataTransfer.files;
+  const files = Array.from(e.dataTransfer.files || []);
   if (files.length > 0) {
-    handleFileSelected(files[0]);
+    handleIncomingFiles(files);
   }
 });
 
 fileInput.addEventListener("change", () => {
-  if (fileInput.files.length > 0) {
-    handleFileSelected(fileInput.files[0]);
+  const files = Array.from(fileInput.files || []);
+  if (files.length > 0) {
+    handleIncomingFiles(files);
   }
 });
 
-function handleFileSelected(file) {
-  if (!file.name.toLowerCase().endsWith(".pdf")) {
-    alert("Please select a PDF document (.pdf)");
-    return;
+function handleIncomingFiles(newFiles) {
+  let acceptedCount = 0;
+  let rejectedCount = 0;
+
+  for (const file of newFiles) {
+    const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (!SUPPORTED_EXTS.includes(ext)) {
+      rejectedCount++;
+      continue;
+    }
+    // Deduplicate by filename + size
+    const exists = stagedFiles.some(f => f.name === file.name && f.size === file.size);
+    if (!exists) {
+      stagedFiles.push(file);
+      acceptedCount++;
+    }
   }
-  currentSelectedFile = file;
-  selectedFileName.textContent = file.name;
-  selectedFileSize.textContent = formatBytes(file.size);
-  fileDetails.classList.remove("hidden");
-  uploadStatusBox.classList.add("hidden");
+
+  if (rejectedCount > 0) {
+    alert(`Notice: ${rejectedCount} file(s) were skipped because only PDF (.pdf), Word (.docx, .doc), and PowerPoint (.pptx, .ppt) are supported.`);
+  }
+
+  renderStagedFiles();
+  uploadStatusBox.className = "alert-box hidden";
 }
 
-removeFileBtn.addEventListener("click", () => {
-  currentSelectedFile = null;
+function renderStagedFiles() {
+  if (stagedFiles.length === 0) {
+    fileStagingArea.classList.add("hidden");
+    fileInput.value = "";
+    return;
+  }
+
+  fileStagingArea.classList.remove("hidden");
+  stagedCountBadge.textContent = `${stagedFiles.length} file${stagedFiles.length > 1 ? "s" : ""}`;
+
+  stagedFilesList.innerHTML = "";
+  stagedFiles.forEach((file, idx) => {
+    const meta = getFileFormatMeta(file.name);
+    const itemEl = document.createElement("div");
+    itemEl.className = "staged-file-item";
+    itemEl.innerHTML = `
+      <div class="file-icon-box ${meta.iconClass}">${meta.label}</div>
+      <div class="staged-file-meta">
+        <div class="staged-file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</div>
+        <div class="staged-file-sub">
+          <span>${formatBytes(file.size)}</span>
+          <span>•</span>
+          <span>Ready to upload</span>
+        </div>
+      </div>
+      <button type="button" class="btn-icon remove-single-file-btn" data-index="${idx}" title="Remove file">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    `;
+    stagedFilesList.appendChild(itemEl);
+  });
+
+  // Attach individual remove handlers
+  document.querySelectorAll(".remove-single-file-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const removeIdx = parseInt(btn.getAttribute("data-index"), 10);
+      if (!isNaN(removeIdx)) {
+        stagedFiles.splice(removeIdx, 1);
+        renderStagedFiles();
+      }
+    });
+  });
+}
+
+clearAllFilesBtn.addEventListener("click", () => {
+  stagedFiles = [];
   fileInput.value = "";
-  fileDetails.classList.add("hidden");
+  renderStagedFiles();
 });
 
 uploadSubmitBtn.addEventListener("click", async () => {
-  if (!currentSelectedFile) return;
+  if (stagedFiles.length === 0) return;
 
+  const totalToUpload = stagedFiles.length;
   uploadSubmitBtn.disabled = true;
   uploadSubmitBtn.innerHTML = `
     <div class="spinner" style="width: 18px; height: 18px; margin: 0; border-width: 2px;"></div>
-    <span>Uploading to S3...</span>
+    <span>Uploading ${totalToUpload} file(s) to S3 & SQS...</span>
   `;
 
   uploadStatusBox.className = "alert-box hidden";
 
   try {
     const formData = new FormData();
-    formData.append("file", currentSelectedFile);
+    for (const file of stagedFiles) {
+      formData.append("files", file);
+    }
 
-    const res = await fetch(`${API_BASE}/upload`, {
+    const res = await fetch(`${API_BASE}/upload/bulk`, {
       method: "POST",
       body: formData
     });
 
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(data.detail || `Upload failed with status ${res.status}`);
+      throw new Error(data.detail || `Bulk upload failed with status ${res.status}`);
     }
 
-    uploadStatusBox.className = "alert-box alert-success";
+    const isSuccess = data.status === "success";
+    const isPartial = data.status === "partial";
+
+    uploadStatusBox.className = isSuccess || isPartial ? "alert-box alert-success" : "alert-box alert-error";
+
+    let rowsHtml = "";
+    if (data.files && data.files.length > 0) {
+      rowsHtml = `
+        <table class="bulk-results-table">
+          <thead>
+            <tr>
+              <th>Document</th>
+              <th>Format</th>
+              <th>Size</th>
+              <th>SQS Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.files.map(f => `
+              <tr>
+                <td><code>${escapeHtml(f.filename)}</code></td>
+                <td><span style="text-transform:uppercase; font-weight:600;">${escapeHtml(f.file_type)}</span></td>
+                <td>${formatBytes(f.file_size)}</td>
+                <td>${f.sqs_queued ? "✅ Queued in SQS" : "⚠️ Uploaded to S3"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
     uploadStatusBox.innerHTML = `
       <div>
-        <strong>✅ Upload Successful!</strong><br>
-        File: <code>${escapeHtml(data.filename)}</code><br>
-        S3 Bucket: <code>${escapeHtml(data.bucket)}</code><br>
-        S3 Key: <code>${escapeHtml(data.s3_key)}</code><br><br>
-        <em>Ingestion into Amazon S3 Vectors has been automatically triggered via SQS.</em>
+        <strong>${isSuccess ? "🎉 Bulk Upload Successful!" : (isPartial ? "⚠️ Partial Upload Completed:" : "❌ Bulk Upload Failed:")}</strong><br>
+        <span>${escapeHtml(data.message)}</span><br>
+        <div style="margin-top: 6px; font-size: 0.85rem;">
+          Target S3 Bucket: <code>${escapeHtml(data.files?.[0]?.bucket || "S3 Bucket")}</code>
+        </div>
+        ${rowsHtml}
       </div>
     `;
 
-    // Refresh documents list
+    // Clear staged files queue
+    stagedFiles = [];
+    renderStagedFiles();
+
+    // Refresh documents filter dropdown
     loadDocumentsList();
 
   } catch (err) {
     uploadStatusBox.className = "alert-box alert-error";
     uploadStatusBox.innerHTML = `
       <div>
-        <strong>❌ Upload Failed:</strong><br>
+        <strong>❌ Bulk Upload Failed:</strong><br>
         ${escapeHtml(err.message)}
       </div>
     `;
@@ -941,7 +1057,7 @@ uploadSubmitBtn.addEventListener("click", async () => {
         <polyline points="17 8 12 3 7 8"></polyline>
         <line x1="12" y1="3" x2="12" y2="15"></line>
       </svg>
-      <span>Upload to S3 & Trigger Ingestion</span>
+      <span>Upload All Files to S3 & Trigger Ingestion</span>
     `;
   }
 });

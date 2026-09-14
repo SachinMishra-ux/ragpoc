@@ -51,7 +51,28 @@ class UploadResponse(BaseModel):
     filename: str = Field(..., description="Original filename of the uploaded file")
     bucket: str = Field(..., description="Target S3 bucket name")
     s3_key: str = Field(..., description="S3 object key")
+    file_type: str = Field(default="pdf", description="Document type: pdf, docx, doc, pptx, ppt")
+    sqs_queued: bool = Field(default=False, description="Whether message was pushed to SQS queue")
     message: str = Field(..., description="Descriptive status message")
+
+
+class UploadedFileInfo(BaseModel):
+    filename: str = Field(..., description="Original filename of the uploaded file")
+    s3_key: str = Field(..., description="S3 object key")
+    bucket: str = Field(..., description="Target S3 bucket name")
+    file_size: int = Field(default=0, description="Size of file in bytes")
+    file_type: str = Field(default="document", description="Document type: pdf, docx, doc, pptx, ppt")
+    sqs_queued: bool = Field(default=False, description="Whether message was queued in SQS")
+    status: str = Field(default="uploaded", description="Status of the individual file upload")
+
+
+class BulkUploadResponse(BaseModel):
+    status: str = Field(..., description="Overall batch upload status ('success', 'partial', or 'error')")
+    total_files: int = Field(..., description="Total number of files received in batch")
+    successful_uploads: int = Field(..., description="Number of files successfully uploaded to S3 and queued")
+    failed_uploads: int = Field(default=0, description="Number of files that failed upload or validation")
+    files: list[UploadedFileInfo] = Field(default=[], description="Detailed breakdown of uploaded files")
+    message: str = Field(..., description="Summary status message")
 
 
 class DeleteDocumentResponse(BaseModel):

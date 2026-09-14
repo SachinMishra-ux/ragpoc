@@ -9,22 +9,28 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from dotenv import load_dotenv
 
-# Ensure root directory is in the path
+# Ensure root directory and .venv site-packages are in the path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
+venv_site = os.path.join(PROJECT_ROOT, ".venv", "lib", "python3.12", "site-packages")
+if os.path.exists(venv_site) and venv_site not in sys.path:
+    sys.path.insert(0, venv_site)
 
 # Load environment variables
 load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, ".env"))
 load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "src", ".env"))
 
-from src.embedding_service.document_processor import render_pdf_page_to_base64
+import json
+from src.embedding_service.document_processor import render_pdf_page_to_base64, SUPPORTED_EXTENSIONS
 from src.embedding_service.embedder import GeminiEmbedder
 from src.embedding_service.s3_vector_manager import S3VectorManager
 from src.generation_service.validation import (
     QueryRequest,
     QueryResponse,
     UploadResponse,
+    UploadedFileInfo,
+    BulkUploadResponse,
     DeleteDocumentResponse,
     DeleteVectorsRequest,
     DeleteVectorsResponse,
@@ -33,7 +39,8 @@ from src.generation_service.validation import (
 from src.generation_service.agent import get_agent, AcademicRAGAgent
 
 AWS_REGION = os.getenv("AWS_REGION", "eu-north-1")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "financial-rag-documents-001")
+SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "academic-rag-documents-493116771407")
 S3_VECTOR_BUCKET_NAME = (
     os.getenv("S3_VECTOR_BUCKET_NAME")
     or os.getenv("VECTOR_BUCKET_NAME")
@@ -45,6 +52,41 @@ S3_VECTOR_INDEX_NAME = (
     or os.getenv("COLLECTION_NAME")
     or "financial-index"
 )
+
+CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".ppt": "application/vnd.ms-powerpoint",
+}
+
+
+def enqueue_sqs_document_event(bucket: str, key: str) -> str | None:
+    """Enqueues an S3 object upload event notification to SQS."""
+    if not SQS_QUEUE_URL:
+        return None
+    try:
+        sqs = boto3.client("sqs", region_name=AWS_REGION)
+        msg_body = json.dumps({
+            "Records": [
+                {
+                    "eventSource": "aws:s3",
+                    "eventName": "ObjectCreated:Put",
+                    "s3": {
+                        "bucket": {"name": bucket},
+                        "object": {"key": key}
+                    }
+                }
+            ]
+        })
+        resp = sqs.send_message(QueueUrl=SQS_QUEUE_URL, MessageBody=msg_body)
+        msg_id = resp.get("MessageId")
+        print(f"Enqueued SQS event for s3://{bucket}/{key} (MessageId: {msg_id})")
+        return msg_id
+    except Exception as e:
+        print(f"Notice: Failed to enqueue message to SQS: {e}")
+        return None
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -155,34 +197,42 @@ def options_upload():
 
 @app.post("/upload", response_model=UploadResponse, status_code=status.HTTP_200_OK)
 async def upload_document(file: UploadFile = File(...)):
-    """Uploads a PDF document to S3, triggering the S3 worker ingestion pipeline."""
-    if not file.filename.lower().endswith(".pdf"):
+    """Uploads an academic document (PDF, Word, PPT) to S3, triggering SQS ingestion into S3 Vectors."""
+    filename = os.path.basename(file.filename or "unknown")
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PDF documents are supported for ingestion.",
+            detail=f"Unsupported file format '{ext}'. Supported formats: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
         )
 
     try:
         s3 = boto3.client("s3", region_name=AWS_REGION)
-        s3_key = os.path.basename(file.filename)
+        s3_key = filename
+        content_type = CONTENT_TYPES.get(ext, "application/octet-stream")
 
-        print(f"Uploading {file.filename} to s3://{S3_BUCKET_NAME}/{s3_key}...")
+        print(f"Uploading {filename} to s3://{S3_BUCKET_NAME}/{s3_key}...")
         s3.upload_fileobj(
             file.file,
             S3_BUCKET_NAME,
             s3_key,
-            ExtraArgs={"ContentType": "application/pdf"},
+            ExtraArgs={"ContentType": content_type},
         )
         print(f"Successfully uploaded {s3_key} to S3.")
 
+        # Enqueue SQS notification for asynchronous worker ingestion
+        sqs_msg_id = enqueue_sqs_document_event(S3_BUCKET_NAME, s3_key)
+
         return UploadResponse(
             status="success",
-            filename=file.filename,
+            filename=filename,
             bucket=S3_BUCKET_NAME,
             s3_key=s3_key,
+            file_type=ext.lstrip("."),
+            sqs_queued=bool(sqs_msg_id),
             message=(
-                f"Successfully uploaded {file.filename} to s3://{S3_BUCKET_NAME}/{s3_key}. "
-                f"Ingestion into Amazon S3 Vectors has been triggered."
+                f"Successfully uploaded {filename} to s3://{S3_BUCKET_NAME}/{s3_key}. "
+                f"Ingestion into Amazon S3 Vectors has been queued."
             ),
         )
     except ClientError as e:
@@ -199,6 +249,105 @@ async def upload_document(file: UploadFile = File(...)):
         )
 
 
+@app.options("/upload/bulk")
+def options_upload_bulk():
+    return {}
+
+
+@app.post("/upload/bulk", response_model=BulkUploadResponse, status_code=status.HTTP_200_OK)
+async def upload_bulk_documents(files: list[UploadFile] = File(...)):
+    """
+    Accepts multiple documents (PDF, Word, PowerPoint), uploads them to the S3 general purpose bucket,
+    and publishes notifications to SQS for automated ingestion into Amazon S3 Vectors.
+    """
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files provided for bulk upload.",
+        )
+
+    s3 = boto3.client("s3", region_name=AWS_REGION)
+    uploaded_records: list[UploadedFileInfo] = []
+    successful_count = 0
+    failed_count = 0
+
+    for f in files:
+        filename = os.path.basename(f.filename or "unknown")
+        ext = os.path.splitext(filename)[1].lower()
+
+        if ext not in SUPPORTED_EXTENSIONS:
+            uploaded_records.append(
+                UploadedFileInfo(
+                    filename=filename,
+                    s3_key="",
+                    bucket=S3_BUCKET_NAME,
+                    file_type=ext.lstrip("."),
+                    sqs_queued=False,
+                    status=f"rejected: unsupported format (supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))})",
+                )
+            )
+            failed_count += 1
+            continue
+
+        try:
+            s3_key = filename
+            content_type = CONTENT_TYPES.get(ext, "application/octet-stream")
+
+            content = await f.read()
+            file_size = len(content)
+
+            s3.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=s3_key,
+                Body=content,
+                ContentType=content_type,
+            )
+            print(f"Uploaded bulk item {filename} ({file_size} bytes) to s3://{S3_BUCKET_NAME}/{s3_key}")
+
+            # Enqueue SQS event
+            sqs_msg_id = enqueue_sqs_document_event(S3_BUCKET_NAME, s3_key)
+
+            uploaded_records.append(
+                UploadedFileInfo(
+                    filename=filename,
+                    s3_key=s3_key,
+                    bucket=S3_BUCKET_NAME,
+                    file_size=file_size,
+                    file_type=ext.lstrip("."),
+                    sqs_queued=bool(sqs_msg_id),
+                    status="uploaded",
+                )
+            )
+            successful_count += 1
+        except Exception as e:
+            print(f"Error uploading {filename}: {e}")
+            uploaded_records.append(
+                UploadedFileInfo(
+                    filename=filename,
+                    s3_key="",
+                    bucket=S3_BUCKET_NAME,
+                    file_type=ext.lstrip("."),
+                    sqs_queued=False,
+                    status=f"error: {str(e)}",
+                )
+            )
+            failed_count += 1
+
+    overall_status = "success" if failed_count == 0 else ("partial" if successful_count > 0 else "error")
+
+    return BulkUploadResponse(
+        status=overall_status,
+        total_files=len(files),
+        successful_uploads=successful_count,
+        failed_uploads=failed_count,
+        files=uploaded_records,
+        message=(
+            f"Successfully processed {successful_count} of {len(files)} file(s). "
+            f"Documents uploaded to s3://{S3_BUCKET_NAME}/ and queued for Amazon S3 Vectors ingestion."
+        ),
+    )
+
+
 @app.get("/documents", status_code=status.HTTP_200_OK)
 def list_indexed_documents():
     """Returns a list of distinct document names available in S3 Vectors / data directory."""
@@ -206,7 +355,8 @@ def list_indexed_documents():
     data_dir = os.path.join(PROJECT_ROOT, "data")
     if os.path.exists(data_dir):
         for f in os.listdir(data_dir):
-            if f.lower().endswith(".pdf"):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in SUPPORTED_EXTENSIONS:
                 docs.add(f)
 
     if agent_instance and agent_instance.vector_manager:

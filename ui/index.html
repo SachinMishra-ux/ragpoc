@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Academic & Engineering RAG Agent • Amazon S3 Vectors</title>
-  <link rel="stylesheet" href="style.css?v=3.1.0">
+  <link rel="stylesheet" href="style.css?v=3.2.0">
   
   <!-- Highlight.js for Code Syntax Highlighting (Cloudflare CDNJS) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
@@ -70,7 +70,7 @@
           <polyline points="17 8 12 3 7 8"></polyline>
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
-        Upload Documents to S3
+        Upload Documents (Bulk)
       </button>
     </nav>
 
@@ -214,7 +214,7 @@
         </div>
       </section>
 
-      <!-- TAB 2: UPLOAD TO S3 -->
+      <!-- TAB 2: UPLOAD TO S3 (BULK SUPPORT) -->
       <section id="upload-tab" class="tab-pane">
         <div class="card upload-card">
           <div class="card-header">
@@ -222,18 +222,19 @@
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242M12 12v9m-4-4 4 4 4-4"/>
               </svg>
-              <span>Upload PDF Document to Amazon S3</span>
+              <span>Upload Academic Documents to S3 (Bulk Support)</span>
             </div>
             <span class="badge badge-neutral" id="targetBucketBadge">Target: S3 Bucket</span>
           </div>
 
           <p class="section-desc">
-            Upload engineering textbooks, lecture notes, or academic PDFs directly into your S3 bucket.
-            The automated worker daemon ingests document embeddings and rich filterable metadata into Amazon S3 Vectors.
+            Upload single or bulk academic files directly to Amazon S3. Supports <strong>PDF (.pdf)</strong>,
+            <strong>Word (.docx, .doc)</strong>, and <strong>PowerPoint (.pptx, .ppt)</strong>.
+            Uploaded files trigger the asynchronous SQS worker to stream pages/slides and index embeddings into Amazon S3 Vectors.
           </p>
 
           <div id="dropZone" class="drop-zone">
-            <input type="file" id="fileInput" accept=".pdf" class="file-input">
+            <input type="file" id="fileInput" accept=".pdf,.docx,.doc,.pptx,.ppt" multiple class="file-input">
             <div class="drop-zone-content">
               <div class="upload-icon">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -244,33 +245,31 @@
                   <line x1="15" y1="15" x2="12" y2="12"></line>
                 </svg>
               </div>
-              <h3>Drag & drop your academic PDF here</h3>
+              <h3>Drag & drop academic files here (bulk supported)</h3>
               <p>or <span class="browse-link">browse files</span> from your computer</p>
-              <span class="file-format-hint">Only .pdf documents are supported</span>
+              <span class="file-format-hint">Supported formats: PDF (.pdf), Word (.docx, .doc), PowerPoint (.pptx, .ppt)</span>
             </div>
           </div>
 
-          <div id="fileDetails" class="file-details hidden">
-            <div class="file-info-row">
-              <div class="file-icon-box">PDF</div>
-              <div class="file-meta">
-                <div id="selectedFileName" class="file-name">filename.pdf</div>
-                <div id="selectedFileSize" class="file-size">0 KB</div>
+          <!-- Staged Files Queue Area -->
+          <div id="fileStagingArea" class="file-staging-area hidden">
+            <div class="staging-header">
+              <div class="staging-title">
+                <strong>Staged Files</strong>
+                <span id="stagedCountBadge" class="badge badge-primary">0 files</span>
               </div>
-              <button type="button" id="removeFileBtn" class="btn-icon" title="Remove file">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
+              <button type="button" id="clearAllFilesBtn" class="btn btn-secondary btn-sm">Clear All</button>
             </div>
+
+            <div id="stagedFilesList" class="staged-files-list"></div>
+
             <button id="uploadSubmitBtn" class="btn btn-primary btn-block">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="17 8 12 3 7 8"></polyline>
                 <line x1="12" y1="3" x2="12" y2="15"></line>
               </svg>
-              <span>Upload to S3 & Trigger Ingestion</span>
+              <span>Upload All Files to S3 & Trigger Ingestion</span>
             </button>
           </div>
 
@@ -299,6 +298,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=3.1.0"></script>
+  <script src="app.js?v=3.2.0"></script>
 </body>
 </html>

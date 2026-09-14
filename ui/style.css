@@ -1149,43 +1149,123 @@ body {
   color: var(--text-muted);
 }
 
-.file-details {
+.file-details,
+.file-staging-area {
   margin-top: 1.5rem;
 }
 
-.file-info-row {
+.staging-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.staging-title {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 10px;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.staged-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding-right: 4px;
+}
+
+.staged-file-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-radius: var(--radius-md);
-  margin-bottom: 1rem;
+  transition: border-color 0.15s ease;
+}
+
+.staged-file-item:hover {
+  border-color: #475569;
 }
 
 .file-icon-box {
-  background: #ef4444;
   color: #fff;
   font-weight: 700;
-  font-size: 0.75rem;
-  padding: 6px 10px;
+  font-size: 0.72rem;
+  padding: 5px 8px;
   border-radius: 4px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  min-width: 48px;
+  text-align: center;
 }
 
-.file-meta {
+.file-icon-pdf {
+  background: #ef4444;
+}
+
+.file-icon-word {
+  background: #2563eb;
+}
+
+.file-icon-ppt {
+  background: #ea580c;
+}
+
+.file-icon-other {
+  background: #64748b;
+}
+
+.staged-file-meta {
   flex: 1;
+  min-width: 0;
 }
 
-.file-name {
-  font-size: 0.95rem;
+.staged-file-name {
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.file-size {
-  font-size: 0.8rem;
+.staged-file-sub {
+  font-size: 0.78rem;
   color: var(--text-secondary);
+  display: flex;
+  gap: 10px;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
+}
+
+.bulk-results-table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.bulk-results-table th,
+.bulk-results-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: left;
+}
+
+.bulk-results-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .alert-box {

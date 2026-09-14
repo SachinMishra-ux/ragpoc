@@ -10,21 +10,30 @@ import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
-# Ensure root directory is in sys.path
+# Ensure root directory and .venv site-packages are in sys.path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
+venv_site = os.path.join(PROJECT_ROOT, ".venv", "lib", "python3.12", "site-packages")
+if os.path.exists(venv_site) and venv_site not in sys.path:
+    sys.path.insert(0, venv_site)
 
 # Load environment variables
 load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, ".env"))
 load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "src", ".env"))
 
-from src.embedding_service.document_processor import iter_pdf_pages, image_to_base64, get_pdf_page_count
+from src.embedding_service.document_processor import (
+    iter_document_pages,
+    image_to_base64,
+    get_document_page_count,
+    SUPPORTED_EXTENSIONS,
+)
 from src.embedding_service.embedder import GeminiEmbedder
 from src.embedding_service.s3_vector_manager import S3VectorManager
 
 AWS_REGION = os.getenv("AWS_REGION", "eu-north-1")
 SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "academic-rag-documents-493116771407")
 S3_VECTOR_BUCKET_NAME = (
     os.getenv("S3_VECTOR_BUCKET_NAME")
     or os.getenv("VECTOR_BUCKET_NAME")
@@ -50,34 +59,37 @@ signal.signal(signal.SIGINT, handle_exit)
 signal.signal(signal.SIGTERM, handle_exit)
 
 
-def ingest_pdf_file(pdf_path, bucket_name, object_key, vector_manager, embedder, batch_size=5):
+def ingest_document_file(doc_path, bucket_name, object_key, vector_manager, embedder, batch_size=5):
     """
-    Processes a PDF file downloaded from S3 page-by-page, generates Gemini embedding 2 vectors,
-    and batch upserts into Amazon S3 Vectors with rich filterable metadata.
+    Processes an academic document (PDF, Word, PowerPoint) downloaded from S3 page-by-page/slide-by-slide,
+    generates Gemini embedding 2 vectors, and batch upserts into Amazon S3 Vectors with rich filterable metadata.
     """
     try:
         filename = os.path.basename(object_key)
-        file_size = os.path.getsize(pdf_path)
-        print(f"\n--- Ingesting s3://{bucket_name}/{object_key} ---")
-        total_pages = get_pdf_page_count(pdf_path)
+        ext = os.path.splitext(filename)[1].lower()
+        file_size = os.path.getsize(doc_path)
+        print(f"\n--- Ingesting s3://{bucket_name}/{object_key} (Format: {ext.upper()}) ---")
+
+        total_pages = get_document_page_count(doc_path)
         if total_pages == 0:
-            print(f"No pages found or empty PDF: {filename}")
+            print(f"No pages or slides found in: {filename}")
             return False
 
-        print(f"Streaming {filename} page-by-page (Total pages: {total_pages})...")
+        print(f"Streaming {filename} page-by-page / slide-by-slide (Total: {total_pages})...")
         batch_embeddings = []
         batch_images = []
         batch_metadata = []
         processed_count = 0
 
-        for page_num, total, page_img, page_text in iter_pdf_pages(pdf_path, extract_text=True):
-            print(f"Embedding page {page_num}/{total} for {filename}...")
+        for page_num, total, page_img, page_text in iter_document_pages(doc_path, extract_text=True):
+            print(f"Embedding page/slide {page_num}/{total} for {filename}...")
             b64_str = image_to_base64(page_img)
             emb = embedder.embed_image(page_img)
 
-            # Construct filterable metadata
+            # Rich filterable metadata for S3 Vectors
             meta = {
                 "document_name": filename,
+                "file_extension": ext,
                 "page_number": page_num,
                 "total_pages": total,
                 "source_bucket": bucket_name,
@@ -104,13 +116,13 @@ def ingest_pdf_file(pdf_path, bucket_name, object_key, vector_manager, embedder,
                     metadata_list=batch_metadata,
                     batch_size=batch_size,
                 )
-                print(f"✅ Upserted {len(batch_embeddings)} pages to S3 Vectors (Progress: {page_num}/{total})")
+                print(f"✅ Upserted {len(batch_embeddings)} pages/slides to S3 Vectors (Progress: {page_num}/{total})")
                 batch_embeddings = []
                 batch_images = []
                 batch_metadata = []
 
         print(
-            f"🎉 Successfully completed ingestion for {filename} ({processed_count} pages) "
+            f"🎉 Successfully completed ingestion for {filename} ({processed_count} pages/slides) "
             f"into S3 Vector Index '{S3_VECTOR_INDEX_NAME}'"
         )
         return True
@@ -119,8 +131,40 @@ def ingest_pdf_file(pdf_path, bucket_name, object_key, vector_manager, embedder,
         return False
 
 
+# Alias for backward compatibility
+ingest_pdf_file = ingest_document_file
+
+
+def _process_single_s3_object(bucket_name, object_key, s3_client, vector_manager, embedder):
+    """Downloads a single object from S3 and triggers multi-format ingestion."""
+    ext = os.path.splitext(object_key)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        print(f"Ignoring unsupported file format '{ext}': {object_key}. Supported: {SUPPORTED_EXTENSIONS}")
+        return True
+
+    print(f"\nProcessing detected document in S3: s3://{bucket_name}/{object_key}")
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext)
+    os.close(tmp_fd)
+    try:
+        print(f"Downloading s3://{bucket_name}/{object_key}...")
+        s3_client.download_file(bucket_name, object_key, tmp_path)
+        print(f"Downloaded to {tmp_path}")
+
+        return ingest_document_file(tmp_path, bucket_name, object_key, vector_manager, embedder)
+    except Exception as e:
+        print(f"Error downloading or processing s3://{bucket_name}/{object_key}: {e}")
+        return False
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 def process_message(message_body, s3_client, vector_manager, embedder):
-    """Parses an S3 event message and ingests any referenced PDF objects."""
+    """
+    Parses an SQS message body. Supports:
+    1. Standard AWS S3 Event notifications (`{"Records": [{"eventName": "ObjectCreated:...", "s3": {...}}]}`)
+    2. Direct API notifications (`{"bucket": "...", "key": "..."}` or `{"files": [...]}`)
+    """
     try:
         data = json.loads(message_body)
     except Exception as e:
@@ -131,15 +175,21 @@ def process_message(message_body, s3_client, vector_manager, embedder):
         print("Received S3 Test Event. Connection verified.")
         return True
 
+    # Check for direct API notification payload
+    if "bucket" in data and "key" in data:
+        bucket = data["bucket"]
+        key = urllib.parse.unquote_plus(data["key"])
+        return _process_single_s3_object(bucket, key, s3_client, vector_manager, embedder)
+
     records = data.get("Records", [])
     if not records:
-        print("Message contains no S3 records. Skipping.")
+        print(f"Message contains no recognized records or direct payload: {data}. Skipping.")
         return True
 
     success = True
     for record in records:
         event_name = record.get("eventName", "")
-        if not event_name.startswith("ObjectCreated:"):
+        if event_name and not event_name.startswith("ObjectCreated:"):
             print(f"Ignoring non-creation event: {event_name}")
             continue
 
@@ -148,28 +198,12 @@ def process_message(message_body, s3_client, vector_manager, embedder):
         raw_key = s3_info.get("object", {}).get("key", "")
         object_key = urllib.parse.unquote_plus(raw_key)
 
-        if not object_key.lower().endswith(".pdf"):
-            print(f"Ignoring non-PDF file: {object_key}")
+        if not bucket_name or not object_key:
             continue
 
-        print(f"\n[Event: {event_name}] New PDF detected in S3: s3://{bucket_name}/{object_key}")
-
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
-        os.close(tmp_fd)
-        try:
-            print(f"Downloading s3://{bucket_name}/{object_key}...")
-            s3_client.download_file(bucket_name, object_key, tmp_path)
-            print(f"Downloaded to {tmp_path}")
-
-            ingested = ingest_pdf_file(tmp_path, bucket_name, object_key, vector_manager, embedder)
-            if not ingested:
-                success = False
-        except Exception as e:
-            print(f"Error downloading or processing s3://{bucket_name}/{object_key}: {e}")
+        ok = _process_single_s3_object(bucket_name, object_key, s3_client, vector_manager, embedder)
+        if not ok:
             success = False
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
 
     return success
 
