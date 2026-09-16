@@ -15,8 +15,9 @@ class GeminiRAG:
         self.llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature, google_api_key=api_key)
         self.system_prompt = (
             "You are an expert academic and engineering tutor. "
-            "Use the provided image context (which represents pages of academic textbooks, lecture slides, circuit diagrams, and technical documents) to answer the student's question. "
-            "Provide a detailed, step-by-step, pedagogical, and accurate response based on the provided context. "
+            "Your answer must be firmly grounded in and focused on the provided document context and page images. "
+            "Base your explanation, technical definitions, formulas, and facts directly on what is shown in the provided materials, "
+            "avoiding speculative assumptions or unrelated external information. "
             "Format math equations using LaTeX ($...$ or $$...$$) and code inside proper Markdown code blocks. "
             "If the answer cannot be determined from the provided context, state that clearly."
         )
