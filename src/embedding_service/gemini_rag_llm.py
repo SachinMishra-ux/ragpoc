@@ -3,7 +3,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 class GeminiRAG:
-    def __init__(self, model_name="gemini-2.5-pro", temperature=0.2):
+    def __init__(self, model_name="gemini-3.1-flash-lite", temperature=0.2):
         """
         Initializes the Gemini LLM model because Groq decommissioned their vision models.
         Uses a vision-enabled Gemini model by default.
