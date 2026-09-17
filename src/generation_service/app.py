@@ -144,13 +144,15 @@ def query_rag(request: QueryRequest):
             )
 
     try:
-        # Run autonomous LangGraph agent (supports multimodal query with image/screenshot)
+        # Run autonomous LangGraph agent (supports multimodal query with image/screenshot and selectable LLM)
         result = agent_instance.run(
             question=request.question,
             thread_id=request.thread_id,
             document_name=request.document_name,
             limit=request.limit,
             image_base64=request.image_base64,
+            model_provider=request.model_provider,
+            llm_model=request.llm_model,
         )
 
         return QueryResponse(
@@ -158,10 +160,18 @@ def query_rag(request: QueryRequest):
             answer=result["answer"],
             thread_id=result["thread_id"],
             tool_called=result["tool_called"],
+            model_provider=result.get("model_provider", request.model_provider),
+            model_used=result.get("model_used", request.llm_model or "amazon.nova-2-lite-v1:0"),
             user_image=result.get("user_image"),
             pages_retrieved=result["pages_retrieved"],
             images=result["images"],
             sources=result["sources"],
+        )
+    except PermissionError as pe:
+        print(f"Permission error during agent execution: {pe}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(pe),
         )
     except Exception as e:
         print(f"Error during agent execution: {e}")
@@ -511,9 +521,10 @@ def health_check():
 
     agent_ok = agent_instance is not None
     vectors_ok = agent_ok and agent_instance.vector_manager is not None
-    llm_ok = agent_ok and agent_instance.llm is not None
+    nova_ok = agent_ok and agent_instance.nova_agent is not None
+    gemini_ok = agent_ok and agent_instance.gemini_agent is not None
 
-    status_str = "healthy" if (agent_ok and vectors_ok and llm_ok) else "degraded"
+    status_str = "healthy" if (agent_ok and vectors_ok and (nova_ok or gemini_ok)) else "degraded"
 
     return {
         "status": status_str,
@@ -522,7 +533,18 @@ def health_check():
             "s3_vectors_connected": vectors_ok,
             "vector_bucket": S3_VECTOR_BUCKET_NAME,
             "vector_index": S3_VECTOR_INDEX_NAME,
-            "llm_initialized": llm_ok,
+            "default_model": "amazon.nova-2-lite-v1:0",
+            "models": {
+                "amazon_nova": {
+                    "model_id": getattr(agent_instance, "nova_model_id", "amazon.nova-2-lite-v1:0"),
+                    "region": getattr(agent_instance, "bedrock_region", AWS_REGION),
+                    "initialized": nova_ok,
+                },
+                "google_gemini": {
+                    "model_id": getattr(agent_instance, "gemini_model_id", "gemini-3.1-flash-lite"),
+                    "initialized": gemini_ok,
+                },
+            },
             "checkpointer": "SQLite (academic_checkpoints.db)",
         },
     }

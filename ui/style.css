@@ -791,6 +791,32 @@ body {
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.15);
 }
 
+/* Inference Model Badges */
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+}
+
+.model-badge-nova {
+  background: rgba(255, 153, 0, 0.15);
+  color: #ff9900;
+  border: 1px solid rgba(255, 153, 0, 0.35);
+  box-shadow: 0 0 8px rgba(255, 153, 0, 0.15);
+}
+
+.model-badge-gemini {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.15);
+}
+
 /* Agent Thinking / Loading Indicator */
 .agent-thinking {
   display: flex;

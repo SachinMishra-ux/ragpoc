@@ -17,6 +17,7 @@ from src.embedding_service.document_processor import render_pdf_page_to_base64
 from src.embedding_service.embedder import GeminiEmbedder
 from src.embedding_service.s3_vector_manager import S3VectorManager
 from src.generation_service.gemini_rag_llm import GeminiRAG
+from src.generation_service.bedrock_rag_llm import BedrockNovaRAG
 
 
 def parse_args():
@@ -27,6 +28,13 @@ def parse_args():
         "question",
         type=str,
         help="The question you want to ask about the academic/engineering textbooks.",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="nova",
+        choices=["nova", "gemini"],
+        help="Inference LLM model: 'nova' (Amazon Nova 2 Lite, default) or 'gemini' (Google Gemini).",
     )
     parser.add_argument(
         "--limit",
@@ -101,7 +109,12 @@ def main():
             index_name=vector_index,
         )
         embedder = GeminiEmbedder(model_name="gemini-embedding-2")
-        rag_llm = GeminiRAG()
+        if args.model == "nova":
+            rag_llm = BedrockNovaRAG()
+            model_name_display = f"Amazon Nova ({rag_llm.model_name})"
+        else:
+            rag_llm = GeminiRAG()
+            model_name_display = "Google Gemini (gemini-3.1-flash-lite)"
     except Exception as e:
         print(f"Initialization error: {e}")
         sys.exit(1)
@@ -156,9 +169,9 @@ def main():
         print("\nWarning: Could not render page images from local data folder for LLM input.")
         sys.exit(0)
 
-    # 5. Generate Answer via Gemini LLM
+    # 5. Generate Answer via Selected LLM
     try:
-        print(f"\nSubmitting question and {len(context_images)} context page(s) to Gemini LLM...")
+        print(f"\nSubmitting question and {len(context_images)} context page(s) to {model_name_display}...")
         answer = rag_llm.answer_question(args.question, context_images)
         print("\n" + "=" * 60)
         print("Answer:")

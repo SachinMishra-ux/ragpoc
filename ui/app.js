@@ -26,6 +26,7 @@ const questionInput = document.getElementById("questionInput");
 const submitBtn = document.getElementById("submitBtn");
 const docFilterSelect = document.getElementById("docFilterSelect");
 const limitSelect = document.getElementById("limitSelect");
+const modelSelect = document.getElementById("modelSelect");
 
 // Image / Screenshot Attachment Elements
 const attachedImageContainer = document.getElementById("attachedImageContainer");
@@ -490,6 +491,7 @@ queryForm.addEventListener("submit", async (e) => {
 
   const docFilter = docFilterSelect.value || null;
   const limit = parseInt(limitSelect.value, 10) || 3;
+  const selectedModel = modelSelect ? modelSelect.value : "nova";
 
   // Clear input & attached image preview
   questionInput.value = "";
@@ -517,7 +519,9 @@ queryForm.addEventListener("submit", async (e) => {
       thread_id: currentThreadId,
       limit: limit,
       document_name: docFilter,
-      image_base64: attachedImg
+      image_base64: attachedImg,
+      model_provider: selectedModel,
+      llm_model: selectedModel === "nova" ? "amazon.nova-2-lite-v1:0" : "gemini-3.1-flash-lite"
     };
 
     const res = await fetch(`${API_BASE}/query`, {
@@ -659,6 +663,31 @@ function renderAgentMessage(data) {
         </span>`;
   }
 
+  // Model provider badge
+  const modelProvider = (data.model_provider || "nova").toLowerCase();
+  const modelUsed = data.model_used || (modelProvider === "nova" ? "amazon.nova-2-lite-v1:0" : "gemini-3.1-flash-lite");
+  let modelBadgeHtml = "";
+  if (modelProvider === "nova" || modelUsed.includes("nova")) {
+    modelBadgeHtml = `
+      <span class="decision-badge model-badge model-badge-nova" title="Synthesized by Amazon Nova 2 Lite (AWS Bedrock Converse API)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+        </svg>
+        Amazon Nova 2 Lite
+      </span>
+    `;
+  } else {
+    modelBadgeHtml = `
+      <span class="decision-badge model-badge model-badge-gemini" title="Synthesized by Google Gemini 3.1 Flash Lite">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 8v8M8 12h8"></path>
+        </svg>
+        Gemini 3.1 Flash Lite
+      </span>
+    `;
+  }
+
   // Parse markdown with LaTeX math equations
   const answerMarkdown = renderMarkdownWithMath(data.answer || "");
 
@@ -733,6 +762,7 @@ function renderAgentMessage(data) {
       <div class="chat-header-row">
         <div class="chat-sender-meta">
           <span class="chat-sender-name">Academic RAG Agent</span>
+          ${modelBadgeHtml}
           ${badgeHtml}
         </div>
         <span class="chat-time">${formatTime(new Date())}</span>
@@ -1103,4 +1133,16 @@ window.addEventListener("DOMContentLoaded", () => {
   checkHealth();
   loadDocumentsList();
   loadThreadsList();
+
+  // Restore and persist Inference LLM selection
+  if (modelSelect) {
+    const savedModel = localStorage.getItem("academic_rag_model");
+    if (savedModel) {
+      modelSelect.value = savedModel;
+    }
+    modelSelect.addEventListener("change", () => {
+      localStorage.setItem("academic_rag_model", modelSelect.value);
+    });
+  }
 });
+

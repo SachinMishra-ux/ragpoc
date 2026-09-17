@@ -24,6 +24,14 @@ class QueryRequest(BaseModel):
         default=None,
         description="Optional base64-encoded image string (screenshot/chart/table) for multimodal query."
     )
+    model_provider: str = Field(
+        default="nova",
+        description="LLM provider: 'nova' (Amazon Nova 2 Lite via Bedrock) or 'gemini' (Google Gemini 3.1 Flash Lite)."
+    )
+    llm_model: str | None = Field(
+        default=None,
+        description="Specific model identifier to use (e.g., 'amazon.nova-2-lite-v1:0' or 'gemini-3.1-flash-lite'). Defaults to provider's primary model if not specified."
+    )
 
 
 class QueryResponse(BaseModel):
@@ -33,6 +41,14 @@ class QueryResponse(BaseModel):
     tool_called: bool = Field(
         default=False,
         description="Indicates whether the agent dynamically invoked the S3 Vectors tool or answered directly."
+    )
+    model_provider: str = Field(
+        default="nova",
+        description="LLM provider used for inference: 'nova' or 'gemini'."
+    )
+    model_used: str = Field(
+        default="amazon.nova-2-lite-v1:0",
+        description="Model identifier used to produce the answer."
     )
     user_image: str | None = Field(
         default=None,

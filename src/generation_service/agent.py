@@ -18,6 +18,7 @@ load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "src", ".env"))
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_aws import ChatBedrockConverse
 from langchain.agents import create_agent
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -26,6 +27,9 @@ from src.embedding_service.embedder import GeminiEmbedder
 from src.embedding_service.document_processor import render_pdf_page_to_base64
 
 DB_PATH = os.path.join(PROJECT_ROOT, "academic_checkpoints.db")
+DEFAULT_NOVA_MODEL = os.getenv("BEDROCK_NOVA_MODEL", "amazon.nova-2-lite-v1:0")
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_BEDROCK_REGION = os.getenv("BEDROCK_REGION") or os.getenv("AWS_REGION", "eu-north-1")
 
 
 # ---------------------------------------------------------------------------
@@ -59,14 +63,14 @@ def create_rag_tool(vector_manager: S3VectorManager, embedder: GeminiEmbedder):
         query: str,
         document_name: Optional[str] = None,
         limit: int = 3,
-    ) -> str:
+    ) -> Any:
         """Searches the Amazon S3 Vectors database for relevant academic textbooks, engineering lecture notes, scientific papers, circuit diagrams, code examples, formulas, derivations, and problem solutions matching the query across all subjects.
         Args:
             query: The search question or semantic query describing the academic topic, concept, formula, algorithm, theorem, or definition.
             document_name: Optional specific document or textbook filename to restrict the search to (if requested by the user).
             limit: Number of context pages to retrieve (default: 3).
         Returns:
-            Structured text excerpt with page numbers, document names, and content snippets.
+            Structured text excerpt with page numbers, document names, and content snippets along with multimodal page images.
         """
         global _current_turn_context
         _current_turn_context.tool_called = True
@@ -114,6 +118,23 @@ def create_rag_tool(vector_manager: S3VectorManager, embedder: GeminiEmbedder):
 
                 # Try resolving page image
                 local_path = os.path.join(PROJECT_ROOT, "data", doc)
+                if not os.path.exists(local_path):
+                    try:
+                        import boto3
+                        s3_bucket = os.getenv("S3_BUCKET_NAME", "academic-rag-documents-493116771407")
+                        reg = os.getenv("AWS_REGION", "eu-north-1")
+                        ak = os.getenv("AWS_ACCESS_KEY_ID")
+                        sk = os.getenv("AWS_SECRET_ACCESS_KEY")
+                        s3_kw = {"region_name": reg}
+                        if ak and sk:
+                            s3_kw["aws_access_key_id"] = ak
+                            s3_kw["aws_secret_access_key"] = sk
+                        s3 = boto3.client("s3", **s3_kw)
+                        os.makedirs(os.path.join(PROJECT_ROOT, "data"), exist_ok=True)
+                        s3.download_file(s3_bucket, doc, local_path)
+                    except Exception:
+                        pass
+
                 if os.path.exists(local_path) and isinstance(page_num, int):
                     b64_img = render_pdf_page_to_base64(local_path, page_num)
                     if b64_img:
@@ -123,7 +144,16 @@ def create_rag_tool(vector_manager: S3VectorManager, embedder: GeminiEmbedder):
                 if snippet:
                     output_lines.append(f"Content:\n{snippet}\n")
 
-            return "\n".join(output_lines)
+            text_output = "\n".join(output_lines)
+            if _current_turn_context.images:
+                tool_result = [{"type": "text", "text": text_output}]
+                for b64 in _current_turn_context.images:
+                    tool_result.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+                    })
+                return tool_result
+            return text_output
 
         except Exception as e:
             print(f"Error querying S3 Vectors inside tool: {e}")
@@ -176,16 +206,13 @@ class AcademicRAGAgent:
         self.vector_manager = S3VectorManager()
         self.embedder = GeminiEmbedder(model_name="gemini-embedding-2")
 
-        # Initialize LLM
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-3.1-flash-lite",
-            temperature=0.1,
-            google_api_key=api_key,
-        )
-
         # Define Academic RAG Tool
         self.rag_tool = create_rag_tool(self.vector_manager, self.embedder)
+
+        # Model configuration
+        self.nova_model_id = DEFAULT_NOVA_MODEL
+        self.gemini_model_id = DEFAULT_GEMINI_MODEL
+        self.bedrock_region = DEFAULT_BEDROCK_REGION
 
         # Define Dynamic System Prompt for All Academic Disciplines
         self.system_prompt = (
@@ -232,14 +259,75 @@ class AcademicRAGAgent:
             "   and analytical explanation of the visual components based on the retrieved context."
         )
 
-        # Compile Agent with Checkpointer
-        self.agent = create_agent(
-            model=self.llm,
-            tools=[self.rag_tool],
-            system_prompt=self.system_prompt,
-            checkpointer=self.memory,
-        )
-        print("✅ Academic & Engineering RAG Agent successfully compiled with SQLite checkpointer!")
+        self.nova_llm = None
+        self.nova_agent = None
+        self.gemini_llm = None
+        self.gemini_agent = None
+        self._init_agents()
+
+    def _init_agents(self):
+        # 1. Initialize Amazon Nova Lite Agent (Bedrock)
+        try:
+            nova_kwargs = {
+                "model": self.nova_model_id,
+                "region_name": self.bedrock_region,
+                "temperature": 0.1,
+            }
+            bedrock_key = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
+            if bedrock_key:
+                nova_kwargs["bedrock_api_key"] = bedrock_key
+            else:
+                ak = os.getenv("AWS_ACCESS_KEY_ID")
+                sk = os.getenv("AWS_SECRET_ACCESS_KEY")
+                st = os.getenv("AWS_SESSION_TOKEN")
+                if ak and sk:
+                    nova_kwargs["aws_access_key_id"] = ak
+                    nova_kwargs["aws_secret_access_key"] = sk
+                if st:
+                    nova_kwargs["aws_session_token"] = st
+
+            try:
+                self.nova_llm = ChatBedrockConverse(**nova_kwargs)
+            except Exception as ex:
+                if "nova-2-lite" in self.nova_model_id:
+                    fallback_id = "amazon.nova-lite-v1:0"
+                    print(f"[AcademicRAGAgent] Nova 2 fallback to {fallback_id}: {ex}")
+                    nova_kwargs["model"] = fallback_id
+                    self.nova_model_id = fallback_id
+                    self.nova_llm = ChatBedrockConverse(**nova_kwargs)
+                else:
+                    raise ex
+
+            self.nova_agent = create_agent(
+                model=self.nova_llm,
+                tools=[self.rag_tool],
+                system_prompt=self.system_prompt,
+                checkpointer=self.memory,
+            )
+            print(f"✅ Amazon Nova 2 Lite Agent ({self.nova_model_id}, region: {self.bedrock_region}) successfully compiled!")
+        except Exception as e:
+            print(f"Notice: Could not compile Amazon Nova Agent: {e}")
+            self.nova_agent = None
+
+        # 2. Initialize Google Gemini Agent
+        try:
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            if api_key:
+                self.gemini_llm = ChatGoogleGenerativeAI(
+                    model=self.gemini_model_id,
+                    temperature=0.1,
+                    google_api_key=api_key,
+                )
+                self.gemini_agent = create_agent(
+                    model=self.gemini_llm,
+                    tools=[self.rag_tool],
+                    system_prompt=self.system_prompt,
+                    checkpointer=self.memory,
+                )
+                print(f"✅ Google Gemini Agent ({self.gemini_model_id}) successfully compiled!")
+        except Exception as e:
+            print(f"Notice: Could not compile Google Gemini Agent: {e}")
+            self.gemini_agent = None
 
     def run(
         self,
@@ -248,9 +336,12 @@ class AcademicRAGAgent:
         document_name: Optional[str] = None,
         limit: int = 3,
         image_base64: Optional[str] = None,
+        model_provider: str = "nova",
+        llm_model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Executes the agent for a user question under the given thread_id.
+        Supports selecting between Amazon Nova 2 Lite (Bedrock) and Google Gemini.
         Supports multimodal queries with screenshots/images and maintains conversational history in SQLite.
         """
         global _current_turn_context
@@ -258,6 +349,25 @@ class AcademicRAGAgent:
 
         active_thread_id = thread_id or str(uuid.uuid4())
         config = {"configurable": {"thread_id": active_thread_id, "checkpoint_ns": ""}}
+
+        # Resolve model provider & active agent
+        provider = (model_provider or "nova").lower()
+        if provider in ("nova", "amazon", "bedrock"):
+            resolved_provider = "nova"
+            used_model_id = (llm_model if llm_model and "nova" in llm_model.lower() else None) or self.nova_model_id
+            if not self.nova_agent:
+                self._init_agents()
+            if not self.nova_agent:
+                raise ValueError("Amazon Nova Agent is not initialized. Please verify AWS credentials in .env.")
+            active_agent = self.nova_agent
+        else:
+            resolved_provider = "gemini"
+            used_model_id = (llm_model if llm_model and "gemini" in llm_model.lower() else None) or self.gemini_model_id
+            if not self.gemini_agent:
+                self._init_agents()
+            if not self.gemini_agent:
+                raise ValueError("Google Gemini Agent is not initialized. Please verify GEMINI_API_KEY in .env.")
+            active_agent = self.gemini_agent
 
         # Process user attached image / screenshot if provided
         clean_b64 = None
@@ -287,19 +397,19 @@ class AcademicRAGAgent:
         if document_name:
             query_text = f"[Filter: restrict document to '{document_name}'] {question}"
 
-        print(f"\n🤖 Running Academic RAG Agent [Thread: {active_thread_id}]...")
+        print(f"\n🤖 Running Academic RAG Agent [{resolved_provider.upper()}: {used_model_id}] [Thread: {active_thread_id}]...")
         print(f"User Query: {question} (Image attached: {bool(clean_b64)})")
 
         try:
             if clean_b64:
                 human_content = [
                     {"type": "text", "text": query_text},
-                    {"type": "image_url", "image_url": f"data:image/jpeg;base64,{clean_b64}"}
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{clean_b64}"}}
                 ]
             else:
                 human_content = query_text
 
-            response = self.agent.invoke(
+            response = active_agent.invoke(
                 {"messages": [HumanMessage(content=human_content)]},
                 config=config,
             )
@@ -321,6 +431,8 @@ class AcademicRAGAgent:
                 "answer": final_content,
                 "thread_id": active_thread_id,
                 "tool_called": _current_turn_context.tool_called,
+                "model_provider": resolved_provider,
+                "model_used": used_model_id,
                 "user_image": f"data:image/jpeg;base64,{clean_b64}" if clean_b64 else None,
                 "sources": _current_turn_context.sources,
                 "images": _current_turn_context.images,
@@ -328,14 +440,29 @@ class AcademicRAGAgent:
             }
 
         except Exception as e:
-            print(f"Error executing agent: {e}")
+            err_str = str(e)
+            print(f"Error executing agent ({resolved_provider}): {err_str}")
+            if "AccessDeniedException" in err_str and "bedrock:InvokeModel" in err_str:
+                raise PermissionError(
+                    f"AWS Bedrock Access Denied: The IAM user in .env lacks 'bedrock:InvokeModel' permission on {used_model_id}. "
+                    f"Please attach the 'AmazonBedrockFullAccess' policy to your IAM user in the AWS Console, or toggle to Google Gemini in the UI."
+                ) from e
+            if "Operation not allowed" in err_str:
+                raise PermissionError(
+                    f"AWS Bedrock Model Access Required: Model access for '{used_model_id}' has not been enabled yet in your AWS account in region {self.bedrock_region}. "
+                    f"To enable it: Go to AWS Console -> Amazon Bedrock (ensure region is '{self.bedrock_region}') -> Click 'Model access' in the left sidebar -> Click 'Modify model access' -> Check 'Amazon: Nova Lite' (or 'Nova 2 Lite') -> Click 'Next' / 'Save changes'. "
+                    f"Once granted, Amazon Nova inference will work instantly. In the meantime, you can toggle to Google Gemini from the model dropdown."
+                ) from e
             raise e
 
     def get_history(self, thread_id: str) -> List[Dict[str, Any]]:
         """Retrieves conversational message history for a given thread_id."""
         config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+        active_agent = self.nova_agent or self.gemini_agent
+        if not active_agent:
+            return []
         try:
-            state = self.agent.get_state(config)
+            state = active_agent.get_state(config)
             if not state or not state.values:
                 return []
 
