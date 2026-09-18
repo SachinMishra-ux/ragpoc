@@ -3,8 +3,10 @@ from typing import List, Optional
 from langchain_aws import ChatBedrockConverse
 from langchain_core.messages import HumanMessage, SystemMessage
 
-DEFAULT_NOVA_MODEL = os.getenv("BEDROCK_NOVA_MODEL", "amazon.nova-2-lite-v1:0")
-DEFAULT_BEDROCK_REGION = os.getenv("BEDROCK_REGION") or os.getenv("AWS_REGION", "eu-north-1")
+DEFAULT_BEDROCK_REGION = os.getenv("AWS_REGION_2") or os.getenv("BEDROCK_REGION") or "us-east-1"
+DEFAULT_NOVA_MODEL = os.getenv("BEDROCK_NOVA_MODEL") or (
+    "us.amazon.nova-2-lite-v1:0" if "us-" in DEFAULT_BEDROCK_REGION else "amazon.nova-2-lite-v1:0"
+)
 
 
 class BedrockNovaRAG:
@@ -19,10 +21,16 @@ class BedrockNovaRAG:
         region_name: Optional[str] = None,
         temperature: float = 0.2,
     ):
-        self.model_name = model_name
         self.region_name = region_name or DEFAULT_BEDROCK_REGION
-        self.access_key = os.getenv("AWS_ACCESS_KEY_ID")
-        self.secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        self.model_name = model_name or DEFAULT_NOVA_MODEL
+
+        # If user specified amazon.nova-2-lite-v1:0 in a US region, map to cross-region profile
+        if self.model_name == "amazon.nova-2-lite-v1:0" and "us-" in self.region_name:
+            self.model_name = "us.amazon.nova-2-lite-v1:0"
+
+        # Dedicated credentials for Bedrock Nova LLM
+        self.access_key = os.getenv("AWS_ACCESS_KEY_ID2") or os.getenv("AWS_ACCESS_KEY_ID")
+        self.secret_key = os.getenv("AWS_SECRET_ACCESS_KEY2") or os.getenv("AWS_SECRET_ACCESS_KEY")
         self.session_token = os.getenv("AWS_SESSION_TOKEN")
 
         kwargs = {
@@ -30,10 +38,7 @@ class BedrockNovaRAG:
             "region_name": self.region_name,
             "temperature": temperature,
         }
-        bedrock_key = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
-        if bedrock_key:
-            kwargs["bedrock_api_key"] = bedrock_key
-        elif self.access_key and self.secret_key:
+        if self.access_key and self.secret_key:
             kwargs["aws_access_key_id"] = self.access_key
             kwargs["aws_secret_access_key"] = self.secret_key
         if self.session_token:
@@ -43,7 +48,7 @@ class BedrockNovaRAG:
             self.llm = ChatBedrockConverse(**kwargs)
         except Exception as e:
             if "nova-2-lite" in self.model_name:
-                fallback_model = "amazon.nova-lite-v1:0"
+                fallback_model = "us.amazon.nova-lite-v1:0" if "us-" in self.region_name else "amazon.nova-lite-v1:0"
                 print(f"[BedrockNovaRAG] Initializing fallback model {fallback_model} (primary failed: {e})")
                 kwargs["model"] = fallback_model
                 self.model_name = fallback_model

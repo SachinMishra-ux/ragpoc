@@ -27,9 +27,11 @@ from src.embedding_service.embedder import GeminiEmbedder
 from src.embedding_service.document_processor import render_pdf_page_to_base64
 
 DB_PATH = os.path.join(PROJECT_ROOT, "academic_checkpoints.db")
-DEFAULT_NOVA_MODEL = os.getenv("BEDROCK_NOVA_MODEL", "amazon.nova-2-lite-v1:0")
+DEFAULT_BEDROCK_REGION = os.getenv("AWS_REGION_2") or os.getenv("BEDROCK_REGION") or "us-east-1"
+DEFAULT_NOVA_MODEL = os.getenv("BEDROCK_NOVA_MODEL") or (
+    "us.amazon.nova-2-lite-v1:0" if "us-" in DEFAULT_BEDROCK_REGION else "amazon.nova-2-lite-v1:0"
+)
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
-DEFAULT_BEDROCK_REGION = os.getenv("BEDROCK_REGION") or os.getenv("AWS_REGION", "eu-north-1")
 
 
 # ---------------------------------------------------------------------------
@@ -268,29 +270,33 @@ class AcademicRAGAgent:
     def _init_agents(self):
         # 1. Initialize Amazon Nova Lite Agent (Bedrock)
         try:
+            # Map amazon.nova-2-lite-v1:0 to cross-region profile if in US region
+            nova_model = self.nova_model_id
+            if nova_model == "amazon.nova-2-lite-v1:0" and "us-" in self.bedrock_region:
+                nova_model = "us.amazon.nova-2-lite-v1:0"
+                self.nova_model_id = nova_model
+
             nova_kwargs = {
-                "model": self.nova_model_id,
+                "model": nova_model,
                 "region_name": self.bedrock_region,
                 "temperature": 0.1,
             }
-            bedrock_key = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
-            if bedrock_key:
-                nova_kwargs["bedrock_api_key"] = bedrock_key
-            else:
-                ak = os.getenv("AWS_ACCESS_KEY_ID")
-                sk = os.getenv("AWS_SECRET_ACCESS_KEY")
-                st = os.getenv("AWS_SESSION_TOKEN")
-                if ak and sk:
-                    nova_kwargs["aws_access_key_id"] = ak
-                    nova_kwargs["aws_secret_access_key"] = sk
-                if st:
-                    nova_kwargs["aws_session_token"] = st
+
+            # Dedicated credentials for Bedrock Nova LLM
+            ak2 = os.getenv("AWS_ACCESS_KEY_ID2") or os.getenv("AWS_ACCESS_KEY_ID")
+            sk2 = os.getenv("AWS_SECRET_ACCESS_KEY2") or os.getenv("AWS_SECRET_ACCESS_KEY")
+            st2 = os.getenv("AWS_SESSION_TOKEN")
+            if ak2 and sk2:
+                nova_kwargs["aws_access_key_id"] = ak2
+                nova_kwargs["aws_secret_access_key"] = sk2
+            if st2:
+                nova_kwargs["aws_session_token"] = st2
 
             try:
                 self.nova_llm = ChatBedrockConverse(**nova_kwargs)
             except Exception as ex:
                 if "nova-2-lite" in self.nova_model_id:
-                    fallback_id = "amazon.nova-lite-v1:0"
+                    fallback_id = "us.amazon.nova-lite-v1:0" if "us-" in self.bedrock_region else "amazon.nova-lite-v1:0"
                     print(f"[AcademicRAGAgent] Nova 2 fallback to {fallback_id}: {ex}")
                     nova_kwargs["model"] = fallback_id
                     self.nova_model_id = fallback_id
